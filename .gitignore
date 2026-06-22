@@ -1,0 +1,25 @@
+# Visual Studio / .NET
+.vs/
+**/bin/
+**/obj/
+*.user
+*.suo
+
+# Logs
+*.log
+logs/
+
+# Publish outputs and temporary packages
+dist/
+artifacts/
+release/
+*.zip
+
+# Local work records
+_Worker/
+_WorkerArchive/
+_WorkHistory/
+AGENTS.md
+
+# Legacy local archives
+_OldSource/
