@@ -6,6 +6,9 @@ Alt+Tab や Win+Tab だけでは探しづらいウィンドウ、別モニター
 
 GitHub: https://github.com/cyfomix-ui/
 
+## 画面イメージ
+
+![WinPicker screenshot](docs/images/winpicker-overview.png)
 ---
 
 ## 特徴
