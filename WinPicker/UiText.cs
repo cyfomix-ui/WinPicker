@@ -9,7 +9,7 @@ public static class UiText
         CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("ja", StringComparison.OrdinalIgnoreCase);
 
     public static string AppName => "WinPicker";
-    public static string Version => "v0.17";
+    public static string Version => "v0.18";
     public static string GitHubUrl => "https://github.com/cyfomix-ui/";
 
     public static string Show => IsJapanese ? "表示" : "Show";

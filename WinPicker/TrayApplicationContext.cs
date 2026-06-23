@@ -11,6 +11,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly AppSettings _settings;
     private readonly NotifyIcon _notifyIcon;
     private readonly HotKeyWindow _hotKeyWindow;
+    private readonly ModifierChordMouseMover _modifierChordMouseMover;
     private readonly WindowMoveHistory _history = new();
     private readonly WindowMover _mover;
     private MonitorMapForm? _mapForm;
@@ -34,6 +35,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _hotKeyWindow = new HotKeyWindow(OnHotKey, _logger);
         _hotKeyWindow.CreateHandle(new CreateParams());
         RegisterHotKeys();
+        _modifierChordMouseMover = new ModifierChordMouseMover(MoveCursorToTrayFromWinAltChord, _logger);
 
         _logger.Info("WinPicker started.");
     }
@@ -132,7 +134,16 @@ public sealed class TrayApplicationContext : ApplicationContext
     }
 
 
-    private Point ResolveHotkeyAnchorPoint()
+    private Point ResolveHotkeyAnchorPoint() => MoveCursorToTrayAnchor("Hotkey");
+
+    private void MoveCursorToTrayFromWinAltChord()
+    {
+        // Win+Alt alone only moves the cursor near the task tray.
+        // If Space is pressed after that, the existing Win+Alt+Space hotkey still opens the picker.
+        _ = MoveCursorToTrayAnchor("Win+Alt chord");
+    }
+
+    private Point MoveCursorToTrayAnchor(string source)
     {
         if (!_settings.MoveCursorToTrayOnHotkey)
             return Cursor.Position;
@@ -142,19 +153,19 @@ public sealed class TrayApplicationContext : ApplicationContext
             if (_settings.PreferExactTrayIconPosition && NotifyIconLocator.TryGetIconCenter(_notifyIcon, _logger, out var iconCenter))
             {
                 Cursor.Position = iconCenter;
-                _logger.Info($"Hotkey anchor moved to WinPicker tray icon. x={iconCenter.X} y={iconCenter.Y}");
+                _logger.Info($"{source} moved cursor to WinPicker tray icon. x={iconCenter.X} y={iconCenter.Y}");
                 return iconCenter;
             }
 
             var screen = Screen.PrimaryScreen ?? Screen.FromPoint(Cursor.Position);
             var anchor = EstimateTrayAnchor(screen);
             Cursor.Position = anchor;
-            _logger.Info($"Hotkey anchor moved to estimated tray area. x={anchor.X} y={anchor.Y}");
+            _logger.Info($"{source} moved cursor to estimated tray area. x={anchor.X} y={anchor.Y}");
             return anchor;
         }
         catch (Exception ex)
         {
-            _logger.Error("Failed to move cursor to tray anchor.", ex);
+            _logger.Error($"{source} failed to move cursor to tray anchor.", ex);
             return Cursor.Position;
         }
     }
@@ -302,6 +313,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         try
         {
+            _modifierChordMouseMover.Dispose();
             NativeMethods.UnregisterHotKey(_hotKeyWindow.Handle, ShowHotkeyId);
             NativeMethods.UnregisterHotKey(_hotKeyWindow.Handle, RestoreHotkeyId);
             _hotKeyWindow.DestroyHandle();
