@@ -8,7 +8,7 @@ public sealed class MonitorMapForm : Form
     private const int HeaderHeight = 38;
     private const int FooterHeight = 44;
     private const int Gap = 10;
-    private const int MonitorLabelBand = 36;
+    private const int MonitorLabelBand = 42;
     private const int ListRowHeight = 30;
     private const int ListHeaderHeight = 30;
 
@@ -19,6 +19,9 @@ public sealed class MonitorMapForm : Form
     private readonly WindowHighlighter _highlighter;
     private readonly WindowMoveHistory _history;
     private readonly WindowThumbnailCache _thumbnailCache;
+    private readonly GeometrySnapshotService _geometrySnapshots;
+    private readonly Action? _openSettingsAction;
+    private readonly ToolTip _iconToolTip = new();
     private readonly Image? _headerLogo;
     private readonly List<MappedWindow> _mappedWindows = new();
     private readonly List<MappedMonitor> _mappedMonitors = new();
@@ -28,6 +31,10 @@ public sealed class MonitorMapForm : Form
     private Rectangle _virtualBounds = Rectangle.Empty;
     private Rectangle _mapBounds = Rectangle.Empty;
     private Rectangle _listBounds = Rectangle.Empty;
+    private Rectangle _saveGeometryButtonBounds = Rectangle.Empty;
+    private Rectangle _restoreGeometryButtonBounds = Rectangle.Empty;
+    private Rectangle _captureButtonBounds = Rectangle.Empty;
+    private Rectangle _settingsButtonBounds = Rectangle.Empty;
     private float _scale = 1.0f;
     private int _selectedIndex = -1;
     private IntPtr _hoveredHandle = IntPtr.Zero;
@@ -36,7 +43,7 @@ public sealed class MonitorMapForm : Form
     private bool _contextMenuOpen;
     private bool _firstPaintCompleted;
 
-    public MonitorMapForm(AppSettings settings, Logger logger, WindowMoveHistory history)
+    public MonitorMapForm(AppSettings settings, Logger logger, WindowMoveHistory history, Action? openSettingsAction = null)
     {
         _settings = settings;
         _logger = logger;
@@ -45,9 +52,11 @@ public sealed class MonitorMapForm : Form
         _mover = new WindowMover(settings, logger, history);
         _highlighter = new WindowHighlighter(settings, logger);
         _thumbnailCache = new WindowThumbnailCache(logger);
+        _geometrySnapshots = new GeometrySnapshotService(logger);
+        _openSettingsAction = openSettingsAction;
         _headerLogo = BrandingImageLoader.LoadImage("CyfomixHeader.png");
 
-        Text = "WinPicker";
+        Text = UiText.AppTitleWithVersion;
         Icon = IconLoader.LoadAppIcon();
         StartPosition = FormStartPosition.Manual;
         Width = Math.Max(settings.PopupWidth, 640);
@@ -63,6 +72,11 @@ public sealed class MonitorMapForm : Form
         BackColor = Color.FromArgb(24, 24, 24);
         ForeColor = Color.FromArgb(235, 235, 235);
         Font = new Font("Segoe UI", 9f);
+        _iconToolTip.BackColor = Color.FromArgb(34, 34, 34);
+        _iconToolTip.ForeColor = Color.FromArgb(245, 245, 245);
+        _iconToolTip.InitialDelay = 250;
+        _iconToolTip.ReshowDelay = 100;
+        _iconToolTip.AutoPopDelay = 3500;
         Opacity = 0.01;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         UpdateStyles();
@@ -222,6 +236,7 @@ public sealed class MonitorMapForm : Form
         ClearHover();
         _highlighter.Dispose();
         _thumbnailCache.Dispose();
+        _iconToolTip.Dispose();
         _headerLogo?.Dispose();
         base.OnFormClosed(e);
     }
@@ -268,26 +283,48 @@ public sealed class MonitorMapForm : Form
 
         var titleX = _headerLogo is not null ? logoX + logoSize + 8 : MarginSize;
         var titleY = 10;
-        g.DrawString("WinPicker", titleFont, textBrush, titleX, titleY);
+        var titleText = UiText.AppTitleWithVersion;
+        g.DrawString(titleText, titleFont, textBrush, titleX, titleY);
 
-        var titleWidth = (int)Math.Ceiling(g.MeasureString("WinPicker", titleFont).Width);
+        var titleWidth = (int)Math.Ceiling(g.MeasureString(titleText, titleFont).Width);
         var instructionX = titleX + titleWidth + 12;
         var instructionWidth = Math.Max(1, ClientSize.Width - instructionX - MarginSize);
         var instructionRect = new Rectangle(instructionX, 12, instructionWidth, 20);
-        TextRenderer.DrawText(g, UiText.HeaderInstruction, Font, instructionRect, Color.FromArgb(170, 170, 170), TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top);
+        TextRenderer.DrawText(g, UiText.HeaderInstruction, Font, instructionRect, Color.FromArgb(170, 170, 170), TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.PreserveGraphicsClipping);
     }
 
     private void DrawFooter(Graphics g)
     {
-        using var brush = new SolidBrush(Color.FromArgb(170, 170, 170));
-        using var statusBrush = new SolidBrush(Color.FromArgb(255, 210, 90));
-        var y1 = ClientSize.Height - FooterHeight + 5;
-        var y2 = y1 + 18;
+        using var statusFont = new Font("Segoe UI", 8.0f, FontStyle.Regular);
+        using var helpFont = new Font("Segoe UI", 7.6f, FontStyle.Regular);
 
-        g.DrawString(UiText.FooterHelp, Font, brush, MarginSize, y1);
+        var yStatus = ClientSize.Height - FooterHeight + 4;
+        var yHelp = yStatus + 18;
 
-        var message = Shorten(_statusMessage, Math.Max(20, (ClientSize.Width - MarginSize * 2) / 7));
-        g.DrawString(message, Font, statusBrush, MarginSize, y2);
+        var footerRight = ClientSize.Width - MarginSize;
+        if (_settings.ShowWindowList && _listBounds != Rectangle.Empty)
+            footerRight = Math.Max(MarginSize + 80, _listBounds.Left - Gap);
+
+        var footerWidth = Math.Max(1, footerRight - MarginSize);
+        var statusRect = new Rectangle(MarginSize, yStatus, footerWidth, 17);
+        var helpRect = new Rectangle(MarginSize, yHelp, footerWidth, 17);
+
+        // v0.29: status/window name is shown above in yellow, key help below in smaller gray text.
+        TextRenderer.DrawText(
+            g,
+            _statusMessage,
+            statusFont,
+            statusRect,
+            Color.FromArgb(255, 210, 90),
+            TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding | TextFormatFlags.PreserveGraphicsClipping);
+
+        TextRenderer.DrawText(
+            g,
+            UiText.FooterHelp,
+            helpFont,
+            helpRect,
+            Color.FromArgb(170, 170, 170),
+            TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding | TextFormatFlags.PreserveGraphicsClipping);
     }
 
     private void BuildMapGeometry()
@@ -393,6 +430,15 @@ public sealed class MonitorMapForm : Form
         Brush subBrush,
         Brush targetBrush)
     {
+        // v0.20: use smaller dedicated monitor-label fonts.
+        // At high DPI / many-monitor layouts, the normal form font can overlap the monitor map.
+        using var monitorFont = new Font(Font.FontFamily, 7.5f, FontStyle.Regular);
+        using var deviceFont = new Font(Font.FontFamily, 7.0f, FontStyle.Regular);
+
+        var labelLineHeight = Math.Max(12, TextRenderer.MeasureText("Hg", monitorFont).Height - 3);
+        var deviceLineHeight = Math.Max(11, TextRenderer.MeasureText("Hg", deviceFont).Height - 4);
+        var labelBlockHeight = labelLineHeight + deviceLineHeight + 2;
+
         // v0.12: place labels above monitors in the upper row and below monitors in the lower row.
         // This keeps labels away from thumbnails while following the visual grid more naturally.
         var rowPivot = GetMonitorRowPivot();
@@ -400,12 +446,12 @@ public sealed class MonitorMapForm : Form
         var isUpperRow = monitorCenterY <= rowPivot;
 
         var labelY = isUpperRow
-            ? screenRect.Top - MonitorLabelBand + 4
-            : screenRect.Bottom + 4;
+            ? screenRect.Top - labelBlockHeight - 3
+            : screenRect.Bottom + 3;
 
         // Fallback for very small picker sizes: draw just inside the monitor.
-        if (labelY < HeaderHeight + 2 || labelY + 30 > ClientSize.Height - FooterHeight)
-            labelY = isUpperRow ? screenRect.Top + 6 : Math.Max(screenRect.Top + 6, screenRect.Bottom - 32);
+        if (labelY < HeaderHeight + 2 || labelY + labelBlockHeight > ClientSize.Height - FooterHeight)
+            labelY = isUpperRow ? screenRect.Top + 4 : Math.Max(screenRect.Top + 4, screenRect.Bottom - labelBlockHeight - 4);
 
         var label = UiText.Monitor(index + 1);
         if (isTarget)
@@ -413,11 +459,24 @@ public sealed class MonitorMapForm : Form
         if (isPrimary)
             label += $"  [{UiText.PrimaryTag}]";
 
-        var labelRect = new Rectangle(screenRect.Left + 4, labelY, Math.Max(1, screenRect.Width - 8), 16);
-        var deviceRect = new Rectangle(screenRect.Left + 4, labelY + 16, Math.Max(1, screenRect.Width - 8), 16);
+        var labelRect = new Rectangle(screenRect.Left + 3, labelY, Math.Max(1, screenRect.Width - 6), labelLineHeight);
+        var deviceRect = new Rectangle(screenRect.Left + 3, labelY + labelLineHeight + 1, Math.Max(1, screenRect.Width - 6), deviceLineHeight);
 
-        TextRenderer.DrawText(g, label, Font, labelRect, isTarget ? Color.FromArgb(255, 210, 90) : Color.FromArgb(235, 235, 235), TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top);
-        TextRenderer.DrawText(g, screen.DeviceName, Font, deviceRect, Color.FromArgb(170, 170, 170), TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top);
+        TextRenderer.DrawText(
+            g,
+            label,
+            monitorFont,
+            labelRect,
+            isTarget ? Color.FromArgb(255, 210, 90) : Color.FromArgb(235, 235, 235),
+            TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding);
+
+        TextRenderer.DrawText(
+            g,
+            screen.DeviceName,
+            deviceFont,
+            deviceRect,
+            Color.FromArgb(170, 170, 170),
+            TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding);
     }
 
     private float GetMonitorRowPivot()
@@ -493,7 +552,7 @@ public sealed class MonitorMapForm : Form
                     g.FillRectangle(textBackBrush, textBack);
 
                 var textColor = hovered ? Color.FromArgb(30, 30, 30) : Color.FromArgb(245, 245, 245);
-                TextRenderer.DrawText(g, label, Font, textRect, textColor, TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top);
+                TextRenderer.DrawText(g, label, Font, textRect, textColor, TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.PreserveGraphicsClipping);
             }
 
             _mappedWindows.Add(new MappedWindow(window, rect));
@@ -541,6 +600,11 @@ public sealed class MonitorMapForm : Form
     private void DrawWindowList(Graphics g)
     {
         _mappedListItems.Clear();
+        _saveGeometryButtonBounds = Rectangle.Empty;
+        _restoreGeometryButtonBounds = Rectangle.Empty;
+        _captureButtonBounds = Rectangle.Empty;
+        _settingsButtonBounds = Rectangle.Empty;
+
         if (!_settings.ShowWindowList || _listBounds == Rectangle.Empty)
             return;
 
@@ -551,20 +615,50 @@ public sealed class MonitorMapForm : Form
 
         using var panelBrush = new SolidBrush(Color.FromArgb(30, 30, 30));
         using var borderPen = new Pen(Color.FromArgb(80, 80, 80));
-        using var headerBrush = new SolidBrush(Color.FromArgb(45, 45, 45));
+        using var headerBrush = new SolidBrush(Color.FromArgb(72, 60, 104));
         using var textBrush = new SolidBrush(Color.FromArgb(235, 235, 235));
-        using var subBrush = new SolidBrush(Color.FromArgb(170, 170, 170));
 
         g.FillRectangle(panelBrush, _listBounds);
         g.DrawRectangle(borderPen, _listBounds);
         g.FillRectangle(headerBrush, new Rectangle(_listBounds.Left, _listBounds.Top, _listBounds.Width, headerHeight));
-        g.DrawString(UiText.WindowsListHeader(_windows.Count), headerFont, textBrush, _listBounds.Left + 8, _listBounds.Top + Math.Max(4, (headerHeight - headerFont.Height) / 2));
 
-        var visibleRows = Math.Max(1, (_listBounds.Height - headerHeight - 4) / rowHeight);
+        // v0.23: place action icons above the list frame, not inside the list header.
+        // This makes the list header cleaner and allows larger round icon buttons.
+        var buttonSize = 31;
+        var buttonGap = 8;
+        var buttonY = Math.Max(HeaderHeight + 4, _listBounds.Top - buttonSize - 7);
+        _settingsButtonBounds = new Rectangle(_listBounds.Right - buttonGap - buttonSize, buttonY, buttonSize, buttonSize);
+        _captureButtonBounds = new Rectangle(_settingsButtonBounds.Left - buttonGap - buttonSize, buttonY, buttonSize, buttonSize);
+        _restoreGeometryButtonBounds = new Rectangle(_captureButtonBounds.Left - buttonGap - buttonSize, buttonY, buttonSize, buttonSize);
+        _saveGeometryButtonBounds = new Rectangle(_restoreGeometryButtonBounds.Left - buttonGap - buttonSize, buttonY, buttonSize, buttonSize);
+
+        var headerTextRect = new Rectangle(
+            _listBounds.Left + 8,
+            _listBounds.Top + Math.Max(1, (headerHeight - headerFont.Height) / 2),
+            Math.Max(1, _listBounds.Width - 16),
+            headerFont.Height + 2);
+
+        TextRenderer.DrawText(g, UiText.WindowsListHeader(_windows.Count), headerFont, headerTextRect, Color.FromArgb(245, 245, 245), TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+
+        DrawRoundIconButton(g, _saveGeometryButtonBounds, "save");
+        DrawRoundIconButton(g, _restoreGeometryButtonBounds, "restore");
+        DrawRoundIconButton(g, _captureButtonBounds, "camera");
+        DrawRoundIconButton(g, _settingsButtonBounds, "settings");
+
+        var visibleRows = Math.Max(1, (_listBounds.Height - headerHeight - 36) / rowHeight);
         EnsureListSelectionVisible(visibleRows);
         _listScrollOffset = Math.Clamp(_listScrollOffset, 0, Math.Max(0, _windows.Count - visibleRows));
 
-        var y = _listBounds.Top + headerHeight + 2;
+        var contentClip = new Rectangle(
+            _listBounds.Left + 1,
+            _listBounds.Top + headerHeight + 1,
+            Math.Max(1, _listBounds.Width - 2),
+            Math.Max(1, _listBounds.Height - headerHeight - 30));
+
+        var oldClip = g.Save();
+        g.SetClip(contentClip);
+
+        var y = _listBounds.Top + headerHeight + 3;
         for (var row = 0; row < visibleRows; row++)
         {
             var index = _listScrollOffset + row;
@@ -572,7 +666,10 @@ public sealed class MonitorMapForm : Form
                 break;
 
             var window = _windows[index];
-            var rowRect = new Rectangle(_listBounds.Left + 4, y, _listBounds.Width - 8, rowHeight - 2);
+            var rowRect = new Rectangle(_listBounds.Left + 4, y, _listBounds.Width - 8, rowHeight - 3);
+            if (rowRect.Bottom > contentClip.Bottom)
+                break;
+
             var selected = index == _selectedIndex;
             var hovered = window.Handle == _hoveredHandle;
 
@@ -587,22 +684,97 @@ public sealed class MonitorMapForm : Form
             var titleHeight = Math.Max(14, (int)Math.Ceiling(listFont.Height * 1.05));
             var processHeight = Math.Max(12, rowRect.Height - titleHeight - 4);
             var charWidth = Math.Max(6.5f, listFont.Size * 0.72f);
-            var titleSource = window.IsMinimized ? $"{UiText.MinimizedTag} {window.Title}" : window.Title;
+            var elevatedPrefix = window.IsElevated ? $"{UiText.ElevatedTag} " : "";
+            var titleSource = elevatedPrefix + (window.IsMinimized ? $"{UiText.MinimizedTag} {window.Title}" : window.Title);
             var title = Shorten(titleSource, Math.Max(16, (int)((_listBounds.Width - 24) / charWidth)));
             var processSource = window.IsMinimized ? $"{window.ProcessName} / {UiText.MinimizedStatus}" : window.ProcessName;
             var process = Shorten(processSource, Math.Max(16, (int)((_listBounds.Width - 24) / Math.Max(6f, processFont.Size * 0.72f))));
-            TextRenderer.DrawText(g, title, listFont, new Rectangle(rowRect.Left + 6, rowRect.Top + 2, rowRect.Width - 12, titleHeight), window.IsMinimized ? Color.FromArgb(210, 220, 255) : Color.FromArgb(245, 245, 245), TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top);
-            TextRenderer.DrawText(g, process, processFont, new Rectangle(rowRect.Left + 6, rowRect.Top + titleHeight + 1, rowRect.Width - 12, processHeight), Color.FromArgb(170, 170, 170), TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top);
+            var titleColor = window.IsElevated ? Color.FromArgb(255, 222, 145) : window.IsMinimized ? Color.FromArgb(210, 220, 255) : Color.FromArgb(245, 245, 245);
+            TextRenderer.DrawText(g, title, listFont, new Rectangle(rowRect.Left + 6, rowRect.Top + 2, rowRect.Width - 12, titleHeight), titleColor, TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.PreserveGraphicsClipping);
+            TextRenderer.DrawText(g, process, processFont, new Rectangle(rowRect.Left + 6, rowRect.Top + titleHeight + 1, rowRect.Width - 12, processHeight), Color.FromArgb(170, 170, 170), TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.PreserveGraphicsClipping);
 
             _mappedListItems.Add(new MappedListItem(index, window, rowRect));
             y += rowHeight;
         }
 
-        if (_windows.Count > visibleRows)
+        g.Restore(oldClip);
+
+        // v0.24: TextRenderer/GDI text can sometimes leak a partial row at the very bottom,
+        // especially with high DPI and fractional row calculations. Paint a small safety band.
+        var cleanupBand = new Rectangle(
+            _listBounds.Left + 1,
+            Math.Max(_listBounds.Top + headerHeight + 1, _listBounds.Bottom - 24),
+            Math.Max(1, _listBounds.Width - 2),
+            23);
+        using (var cleanupBrush = new SolidBrush(Color.FromArgb(30, 30, 30)))
         {
-            var scrollText = $"{_listScrollOffset + 1}-{Math.Min(_windows.Count, _listScrollOffset + visibleRows)} / {_windows.Count}";
-            var size = TextRenderer.MeasureText(scrollText, listFont);
-            TextRenderer.DrawText(g, scrollText, listFont, new Point(_listBounds.Right - size.Width - 8, _listBounds.Top + Math.Max(4, (headerHeight - listFont.Height) / 2)), Color.FromArgb(160, 160, 160));
+            g.FillRectangle(cleanupBrush, cleanupBand);
+        }
+        using (var borderPen2 = new Pen(Color.FromArgb(80, 80, 80)))
+        {
+            g.DrawRectangle(borderPen2, _listBounds);
+        }
+    }
+
+    private void DrawRoundIconButton(Graphics g, Rectangle bounds, string kind)
+    {
+        if (bounds == Rectangle.Empty)
+            return;
+
+        using var circleBrush = new SolidBrush(Color.FromArgb(54, 54, 58));
+        using var borderPen = new Pen(Color.FromArgb(130, 130, 138), 1.1f);
+        using var iconPen = new Pen(Color.FromArgb(232, 232, 238), 1.7f);
+        using var iconBrush = new SolidBrush(Color.FromArgb(232, 232, 238));
+
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.FillEllipse(circleBrush, bounds);
+        g.DrawEllipse(borderPen, bounds);
+
+        var cx = bounds.Left + bounds.Width / 2;
+        var cy = bounds.Top + bounds.Height / 2;
+
+        if (kind == "save")
+        {
+            var r = new Rectangle(bounds.Left + 9, bounds.Top + 8, bounds.Width - 18, bounds.Height - 17);
+            g.DrawRectangle(iconPen, r);
+            g.DrawLine(iconPen, r.Left + 2, r.Top + 5, r.Right - 2, r.Top + 5);
+            g.FillRectangle(iconBrush, r.Left + 3, r.Bottom - 5, r.Width - 6, 4);
+        }
+        else if (kind == "restore")
+        {
+            var r = new Rectangle(bounds.Left + 8, bounds.Top + 8, bounds.Width - 16, bounds.Height - 16);
+            g.DrawArc(iconPen, r, 35, 280);
+            var p1 = new Point(r.Left + 2, cy);
+            var p2 = new Point(r.Left + 8, cy - 6);
+            var p3 = new Point(r.Left + 8, cy + 6);
+            g.FillPolygon(iconBrush, new[] { p1, p2, p3 });
+        }
+        else if (kind == "camera")
+        {
+            var body = new Rectangle(bounds.Left + 7, bounds.Top + 11, bounds.Width - 14, bounds.Height - 15);
+            g.DrawRectangle(iconPen, body);
+            g.FillRectangle(iconBrush, body.Left + 4, body.Top - 4, 8, 4);
+            g.DrawEllipse(iconPen, cx - 5, cy - 2, 10, 10);
+        }
+        else if (kind == "settings")
+        {
+            // Simple gear: outer teeth + inner circle.
+            using var gearPen = new Pen(Color.FromArgb(232, 232, 238), 1.55f);
+            var outer = new Rectangle(cx - 7, cy - 7, 14, 14);
+            var inner = new Rectangle(cx - 3, cy - 3, 6, 6);
+
+            for (var i = 0; i < 8; i++)
+            {
+                var angle = Math.PI * 2 * i / 8.0;
+                var x1 = cx + (int)Math.Round(Math.Cos(angle) * 8);
+                var y1 = cy + (int)Math.Round(Math.Sin(angle) * 8);
+                var x2 = cx + (int)Math.Round(Math.Cos(angle) * 11);
+                var y2 = cy + (int)Math.Round(Math.Sin(angle) * 11);
+                g.DrawLine(gearPen, x1, y1, x2, y2);
+            }
+
+            g.DrawEllipse(gearPen, outer);
+            g.DrawEllipse(gearPen, inner);
         }
     }
 
@@ -674,6 +846,9 @@ public sealed class MonitorMapForm : Form
         if (e.Button != MouseButtons.Left)
             return;
 
+        if (TryHandleListButtonClick(e.Location))
+            return;
+
         if (TrySelectListItem(e.Location, summon: false))
             return;
 
@@ -705,7 +880,7 @@ public sealed class MonitorMapForm : Form
             return;
         }
 
-        var visibleRows = Math.Max(1, (_listBounds.Height - GetListHeaderHeight() - 4) / GetListRowHeight());
+        var visibleRows = Math.Max(1, (_listBounds.Height - GetListHeaderHeight() - 36) / GetListRowHeight());
         var delta = e.Delta > 0 ? -3 : 3;
         _listScrollOffset = Math.Clamp(_listScrollOffset + delta, 0, Math.Max(0, _windows.Count - visibleRows));
         Invalidate();
@@ -713,6 +888,9 @@ public sealed class MonitorMapForm : Form
 
     private void OnMouseMove(object? sender, MouseEventArgs e)
     {
+        if (UpdateIconToolTip(e.Location))
+            return;
+
         if (TrySelectListItem(e.Location, summon: false, hoverOnly: true))
             return;
 
@@ -730,6 +908,186 @@ public sealed class MonitorMapForm : Form
         {
             ClearHover();
             Invalidate();
+        }
+    }
+
+    private bool UpdateIconToolTip(Point location)
+    {
+        var text = "";
+
+        if (_saveGeometryButtonBounds.Contains(location))
+            text = UiText.TooltipSaveLayout;
+        else if (_restoreGeometryButtonBounds.Contains(location))
+            text = UiText.TooltipRestoreLayout;
+        else if (_captureButtonBounds.Contains(location))
+            text = UiText.TooltipScreenshot;
+        else if (_settingsButtonBounds.Contains(location))
+            text = UiText.TooltipSettings;
+
+        if (!string.IsNullOrEmpty(text))
+        {
+            if (_iconToolTip.GetToolTip(this) != text)
+                _iconToolTip.SetToolTip(this, text);
+
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(_iconToolTip.GetToolTip(this)))
+            _iconToolTip.SetToolTip(this, "");
+
+        return false;
+    }
+
+    private bool TryHandleListButtonClick(Point location)
+    {
+        if (_saveGeometryButtonBounds.Contains(location))
+        {
+            SaveGeometrySnapshot();
+            return true;
+        }
+
+        if (_restoreGeometryButtonBounds.Contains(location))
+        {
+            ShowGeometryRestoreMenu(_restoreGeometryButtonBounds);
+            return true;
+        }
+
+        if (_captureButtonBounds.Contains(location))
+        {
+            CaptureScreenshot();
+            return true;
+        }
+
+        if (_settingsButtonBounds.Contains(location))
+        {
+            OpenSettingsFromPicker();
+            return true;
+        }
+
+        return false;
+    }
+
+    private void OpenSettingsFromPicker()
+    {
+        try
+        {
+            // v0.28: close the picker itself before opening Settings.
+            // Keeping the picker alive/topmost can steal focus from the settings dialog on some systems.
+            var openSettings = _openSettingsAction;
+
+            TopMost = false;
+            Enabled = false;
+            Opacity = 0.0;
+            Hide();
+
+            BeginInvoke(new Action(() =>
+            {
+                try
+                {
+                    Close();
+                    openSettings?.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("Failed to open settings from picker after closing picker.", ex);
+                }
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to open settings from picker.", ex);
+            try
+            {
+                Close();
+            }
+            catch
+            {
+                // Ignore close failures during fallback.
+            }
+        }
+    }
+
+    private void SaveGeometrySnapshot()
+    {
+        try
+        {
+            // v0.24: save immediately with a timestamp name.
+            // The modal dialog could lose input focus because the picker is TopMost and aggressively keeps focus.
+            var snapshot = _geometrySnapshots.Save(null, _windows);
+            _statusMessage = UiText.GeometrySaved(snapshot.Name);
+            Invalidate();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to save geometry snapshot.", ex);
+        }
+    }
+
+    private void ShowGeometryRestoreMenu(Rectangle buttonBounds)
+    {
+        try
+        {
+            var snapshots = _geometrySnapshots.LoadSnapshots();
+            if (snapshots.Count == 0)
+            {
+                _statusMessage = UiText.NoGeometrySnapshots;
+                Invalidate();
+                return;
+            }
+
+            var menu = CreateDarkMenu();
+            foreach (var snapshot in snapshots.OrderByDescending(s => s.CreatedAt).Take(8))
+            {
+                var label = $"{snapshot.Name}  ({snapshot.CreatedAt:MM/dd HH:mm})";
+                var item = CreateDarkMenuItem(label);
+
+                var restoreWindowsItem = CreateDarkMenuItem(UiText.GeometryRestoreWindows);
+                restoreWindowsItem.Click += (_, _) =>
+                {
+                    _geometrySnapshots.RestoreWindows(snapshot, _enumerator);
+                    _statusMessage = UiText.GeometryWindowsRestored(snapshot.Name);
+                    RefreshWindows();
+                };
+
+                var restoreIconsItem = CreateDarkMenuItem(UiText.GeometryRestoreIcons);
+                restoreIconsItem.Click += (_, _) =>
+                {
+                    _geometrySnapshots.RestoreDesktopIcons(snapshot);
+                    _statusMessage = UiText.GeometryIconsRestored(snapshot.Name);
+                    Invalidate();
+                };
+
+                item.DropDownItems.Add(restoreWindowsItem);
+                item.DropDownItems.Add(restoreIconsItem);
+                menu.Items.Add(item);
+            }
+
+            menu.Show(this, new Point(buttonBounds.Left, buttonBounds.Bottom + 3));
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to show geometry restore menu.", ex);
+        }
+    }
+
+    private async void CaptureScreenshot()
+    {
+        try
+        {
+            // Hide the picker before capture so the saved image is the desktop after WinPicker closes.
+            Hide();
+            Opacity = 0.0;
+            await Task.Delay(220);
+
+            var path = ScreenshotCaptureService.CaptureAllScreens(_logger);
+            _logger.Info(UiText.ScreenshotSaved(path));
+
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to capture screenshot.", ex);
+            Close();
         }
     }
 
@@ -825,8 +1183,22 @@ public sealed class MonitorMapForm : Form
         {
             BackColor = Color.FromArgb(34, 34, 34),
             ForeColor = Color.FromArgb(235, 235, 235),
-            Renderer = new ToolStripProfessionalRenderer(new DarkColorTable())
+            Renderer = new DarkMenuRenderer()
         };
+    }
+
+    private static ToolStripMenuItem CreateDarkMenuItem(string text)
+    {
+        var item = new ToolStripMenuItem(text)
+        {
+            BackColor = Color.FromArgb(34, 34, 34),
+            ForeColor = Color.FromArgb(235, 235, 235)
+        };
+
+        item.DropDown.BackColor = Color.FromArgb(34, 34, 34);
+        item.DropDown.ForeColor = Color.FromArgb(235, 235, 235);
+        item.DropDown.Renderer = new DarkMenuRenderer();
+        return item;
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -1031,7 +1403,7 @@ public sealed class MonitorMapForm : Form
         if (_listBounds == Rectangle.Empty)
             return;
 
-        var visibleRows = Math.Max(1, (_listBounds.Height - GetListHeaderHeight() - 4) / GetListRowHeight());
+        var visibleRows = Math.Max(1, (_listBounds.Height - GetListHeaderHeight() - 36) / GetListRowHeight());
         EnsureListSelectionVisible(visibleRows);
     }
 
@@ -1099,10 +1471,31 @@ public sealed class MonitorMapForm : Form
     private sealed record MappedMonitor(int Index, Screen Screen, Rectangle MapBounds);
     private sealed record MappedListItem(int Index, WindowInfo Window, Rectangle Bounds);
 
+    private sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
+    {
+        public DarkMenuRenderer() : base(new DarkColorTable())
+        {
+        }
+
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = e.Item.Selected
+                ? Color.Black
+                : e.Item.Enabled ? Color.FromArgb(245, 245, 245) : Color.FromArgb(145, 145, 145);
+
+            base.OnRenderItemText(e);
+        }
+    }
+
     private sealed class DarkColorTable : ProfessionalColorTable
     {
-        public override Color MenuItemSelected => Color.FromArgb(55, 55, 55);
-        public override Color MenuItemBorder => Color.FromArgb(90, 90, 90);
+        public override Color MenuItemSelected => Color.FromArgb(160, 205, 240);
+        public override Color MenuItemSelectedGradientBegin => Color.FromArgb(160, 205, 240);
+        public override Color MenuItemSelectedGradientEnd => Color.FromArgb(160, 205, 240);
+        public override Color MenuItemPressedGradientBegin => Color.FromArgb(160, 205, 240);
+        public override Color MenuItemPressedGradientMiddle => Color.FromArgb(160, 205, 240);
+        public override Color MenuItemPressedGradientEnd => Color.FromArgb(160, 205, 240);
+        public override Color MenuItemBorder => Color.FromArgb(80, 130, 180);
         public override Color ToolStripDropDownBackground => Color.FromArgb(34, 34, 34);
         public override Color ImageMarginGradientBegin => Color.FromArgb(34, 34, 34);
         public override Color ImageMarginGradientMiddle => Color.FromArgb(34, 34, 34);

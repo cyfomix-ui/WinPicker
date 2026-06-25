@@ -11,6 +11,7 @@ public sealed class WindowInfo
     public Rectangle Bounds { get; init; }
     public bool IsMinimized { get; init; }
     public bool IsMaximized { get; init; }
+    public bool IsElevated { get; init; }
     public int MonitorIndex { get; init; }
 
     public override string ToString()

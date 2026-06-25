@@ -9,7 +9,8 @@ public static class UiText
         CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("ja", StringComparison.OrdinalIgnoreCase);
 
     public static string AppName => "WinPicker";
-    public static string Version => "v0.18";
+    public static string Version => "v0.29";
+    public static string AppTitleWithVersion => $"{AppName} {Version.ToUpperInvariant()}";
     public static string GitHubUrl => "https://github.com/cyfomix-ui/";
 
     public static string Show => IsJapanese ? "表示" : "Show";
@@ -20,10 +21,28 @@ public static class UiText
     public static string Exit => IsJapanese ? "終了" : "Exit";
     public static string DisplayHotkeyLabel => IsJapanese ? "表示" : "Show";
     public static string RestoreHotkeyLabel => IsJapanese ? "戻す" : "Restore";
+    public static string ScreenshotHotkeyLabel => IsJapanese ? "スクリーンショット" : "Screenshot";
     public static string SettingsSaved => IsJapanese ? "設定を保存しました。" : "Settings saved.";
     public static string NoRestoreHistory => IsJapanese ? "戻せる移動履歴がありません。" : "No move history to restore.";
     public static string MinimizedTag => IsJapanese ? "[最小化]" : "[Min]";
     public static string MinimizedStatus => IsJapanese ? "最小化" : "minimized";
+    public static string ElevatedTag => IsJapanese ? "[管理者]" : "[Admin]";
+    public static string GeometrySaveTitle => IsJapanese ? "ジオメトリを保存" : "Save layout";
+    public static string GeometryRestoreTitle => IsJapanese ? "ジオメトリを復元" : "Restore layout";
+    public static string GeometryNamePrompt => IsJapanese ? "保存名を入力してください。空欄なら日時名で保存します。" : "Enter a name. Leave empty to use a timestamp.";
+    public static string NoGeometrySnapshots => IsJapanese ? "保存されたジオメトリがありません。" : "No saved layouts.";
+    public static string GeometrySaved(string name) => IsJapanese ? $"ジオメトリを保存: {name}" : $"Layout saved: {name}";
+    public static string GeometryRestored(string name) => IsJapanese ? $"ジオメトリを復元: {name}" : $"Layout restored: {name}";
+    public static string GeometryRestoreWindows => IsJapanese ? "ウィンドウ" : "Windows";
+    public static string GeometryRestoreIcons => IsJapanese ? "アイコン" : "Desktop icons";
+    public static string GeometryWindowsRestored(string name) => IsJapanese ? $"ウィンドウを復元: {name}" : $"Window layout restored: {name}";
+    public static string GeometryIconsRestored(string name) => IsJapanese ? $"アイコン位置を復元: {name}" : $"Desktop icon layout restored: {name}";
+    public static string ScreenshotSaved(string path) => IsJapanese ? $"画面キャプチャ保存: {path}" : $"Screenshot saved: {path}";
+    public static string ScreenshotFailed => IsJapanese ? "スクリーンショット保存に失敗しました。" : "Screenshot failed.";
+    public static string TooltipSaveLayout => IsJapanese ? "ジオメトリを保存" : "Save layout";
+    public static string TooltipRestoreLayout => IsJapanese ? "ジオメトリを復元" : "Restore layout";
+    public static string TooltipScreenshot => IsJapanese ? "全画面キャプチャ" : "Capture all screens";
+    public static string TooltipSettings => IsJapanese ? "設定を開く" : "Open settings";
 
     public static string HeaderInstruction => IsJapanese
         ? "ウィンドウをクリックして呼び戻し。モニターを右クリックで移動先を設定。"
@@ -94,6 +113,9 @@ public static class UiText
                    $"Ctrl+矢印: ミニ画面移動\n" +
                    $"Ctrl+Alt+矢印: ミニ画面サイズ変更\n" +
                    $"Enter: 選択ウィンドウを呼び戻す\n" +
+                   $"Altを素早く2回: トレイへカーソル移動\n" +
+                   $"RightAlt+Space: ミニ画面表示\n" +
+                   $"RightAlt+Z: 直前の移動を戻す\n" +
                    $"リスト上でCtrl+マウスホイール: リスト文字サイズ変更";
         }
 
@@ -108,6 +130,9 @@ public static class UiText
                $"Ctrl+Arrow keys: move picker\n" +
                $"Ctrl+Alt+Arrow keys: resize picker\n" +
                $"Enter: summon selected window\n" +
+               $"Double-tap Alt: move cursor to tray\n" +
+               $"RightAlt+Space: show picker\n" +
+               $"RightAlt+Z: restore last move\n" +
                $"Ctrl+mouse wheel on the list: change list font size";
     }
 }

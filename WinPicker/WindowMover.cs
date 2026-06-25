@@ -49,17 +49,7 @@ public sealed class WindowMover
             var x = targetArea.Left + (targetArea.Width - width) / 2;
             var y = targetArea.Top + (targetArea.Height - height) / 2;
 
-            var moved = NativeMethods.SetWindowPos(
-                window.Handle,
-                NativeMethods.HWND_TOP,
-                x,
-                y,
-                width,
-                height,
-                NativeMethods.SWP_SHOWWINDOW);
-
-            if (!moved)
-                _logger.Warn($"SetWindowPos failed hwnd=0x{window.Handle.ToInt64():X}");
+            var moved = MoveWindowRobust(window.Handle, x, y, width, height, "Summon");
 
             if (wasMaximized && _settings.KeepMaximized)
             {
@@ -96,17 +86,13 @@ public sealed class WindowMover
                 Thread.Sleep(80);
             }
 
-            var moved = NativeMethods.SetWindowPos(
+            var moved = MoveWindowRobust(
                 snapshot.Handle,
-                NativeMethods.HWND_TOP,
                 snapshot.Bounds.Left,
                 snapshot.Bounds.Top,
                 snapshot.Bounds.Width,
                 snapshot.Bounds.Height,
-                NativeMethods.SWP_SHOWWINDOW);
-
-            if (!moved)
-                _logger.Warn($"RestoreLast SetWindowPos failed hwnd=0x{snapshot.Handle.ToInt64():X}");
+                "RestoreLast");
 
             if (snapshot.WasMaximized && _settings.KeepMaximized)
             {
@@ -181,6 +167,76 @@ public sealed class WindowMover
         targetIndex = Math.Clamp(_settings.MainMonitorIndex, 0, screens.Length - 1);
         reason = "MainMonitorIndex";
         return screens[targetIndex];
+    }
+
+    private bool MoveWindowRobust(IntPtr hWnd, int x, int y, int width, int height, string source)
+    {
+        try
+        {
+            // Some utility windows resist one of the movement APIs. Try SetWindowPos first,
+            // then MoveWindow, then SetWindowPos again without changing Z-order.
+            var moved = NativeMethods.SetWindowPos(
+                hWnd,
+                NativeMethods.HWND_TOP,
+                x,
+                y,
+                width,
+                height,
+                NativeMethods.SWP_SHOWWINDOW);
+
+            if (!moved)
+            {
+                var error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                _logger.Warn($"{source} SetWindowPos failed hwnd=0x{hWnd.ToInt64():X} err={error}. Trying MoveWindow.");
+            }
+
+            if (!moved)
+            {
+                moved = NativeMethods.MoveWindow(hWnd, x, y, width, height, true);
+                if (!moved)
+                {
+                    var error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                    _logger.Warn($"{source} MoveWindow failed hwnd=0x{hWnd.ToInt64():X} err={error}. Trying SetWindowPos without Z-order.");
+                }
+            }
+
+            if (!moved)
+            {
+                moved = NativeMethods.SetWindowPos(
+                    hWnd,
+                    IntPtr.Zero,
+                    x,
+                    y,
+                    width,
+                    height,
+                    NativeMethods.SWP_NOZORDER | NativeMethods.SWP_SHOWWINDOW);
+            }
+
+            Thread.Sleep(30);
+
+            var after = GetCurrentBounds(hWnd, Rectangle.Empty);
+            var targetPoint = new Point(x + Math.Max(1, width / 2), y + Math.Max(1, height / 2));
+            var movedToTarget = after.Width > 0 &&
+                                after.Height > 0 &&
+                                after.Left <= targetPoint.X &&
+                                after.Right >= targetPoint.X &&
+                                after.Top <= targetPoint.Y &&
+                                after.Bottom >= targetPoint.Y;
+
+            _logger.Info($"{source} move result hwnd=0x{hWnd.ToInt64():X} moved={moved} after={after} target=({x},{y},{width},{height}) movedToTarget={movedToTarget}");
+
+            if (!movedToTarget)
+            {
+                _logger.Warn($"{source} window did not appear to move to target. If this is an elevated/admin app such as a disk utility, run WinPicker as administrator too.");
+            }
+
+            return moved;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"{source} MoveWindowRobust failed hwnd=0x{hWnd.ToInt64():X}", ex);
+            return false;
+        }
     }
 
     private void BringToFront(IntPtr hWnd)

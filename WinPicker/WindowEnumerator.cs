@@ -75,6 +75,7 @@ public sealed class WindowEnumerator
             return null;
 
         var processName = GetProcessName(processId);
+        var isElevated = IsProcessElevated(processId);
         if (IsExcluded(processName, title))
             return null;
 
@@ -102,8 +103,48 @@ public sealed class WindowEnumerator
             Bounds = bounds,
             IsMinimized = isMinimized,
             IsMaximized = NativeMethods.IsZoomed(hWnd),
+            IsElevated = isElevated,
             MonitorIndex = monitorIndex
         };
+    }
+
+
+    private bool IsProcessElevated(int processId)
+    {
+        IntPtr processHandle = IntPtr.Zero;
+        IntPtr tokenHandle = IntPtr.Zero;
+
+        try
+        {
+            processHandle = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)processId);
+            if (processHandle == IntPtr.Zero)
+                return false;
+
+            if (!NativeMethods.OpenProcessToken(processHandle, NativeMethods.TOKEN_QUERY, out tokenHandle))
+                return false;
+
+            var elevation = new NativeMethods.TOKEN_ELEVATION();
+            var ok = NativeMethods.GetTokenInformation(
+                tokenHandle,
+                NativeMethods.TokenElevation,
+                out elevation,
+                Marshal.SizeOf<NativeMethods.TOKEN_ELEVATION>(),
+                out _);
+
+            return ok && elevation.TokenIsElevated != 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"Failed to check elevation for processId={processId}: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            if (tokenHandle != IntPtr.Zero)
+                NativeMethods.CloseHandle(tokenHandle);
+            if (processHandle != IntPtr.Zero)
+                NativeMethods.CloseHandle(processHandle);
+        }
     }
 
     private bool IsExcluded(string processName, string title)

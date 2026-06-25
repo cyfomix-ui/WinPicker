@@ -27,6 +27,7 @@ public sealed class SettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ShowInTaskbar = false;
+        TopMost = true;
         ClientSize = new Size(560, 548);
         BackColor = Color.FromArgb(28, 28, 28);
         ForeColor = Color.FromArgb(235, 235, 235);
@@ -329,4 +330,13 @@ public sealed class SettingsForm : Form
     {
         public override string ToString() => Label;
     }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        TopMost = true;
+        Activate();
+        BringToFront();
+    }
+
 }

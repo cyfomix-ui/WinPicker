@@ -6,3 +6,5 @@ global using System.Linq;
 global using System.Threading;
 global using System.Windows.Forms;
 global using Microsoft.Win32;
+global using System.Text.Json;
+global using System.Runtime.InteropServices;
