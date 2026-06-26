@@ -9,7 +9,7 @@ public static class UiText
         CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("ja", StringComparison.OrdinalIgnoreCase);
 
     public static string AppName => "WinPicker";
-    public static string Version => "v0.29";
+    public static string Version => "v0.33";
     public static string AppTitleWithVersion => $"{AppName} {Version.ToUpperInvariant()}";
     public static string GitHubUrl => "https://github.com/cyfomix-ui/";
 
@@ -114,6 +114,7 @@ public static class UiText
                    $"Ctrl+Alt+矢印: ミニ画面サイズ変更\n" +
                    $"Enter: 選択ウィンドウを呼び戻す\n" +
                    $"Altを素早く2回: トレイへカーソル移動\n" +
+                   $"Altを3回連打: ミニ画面表示\n" +
                    $"RightAlt+Space: ミニ画面表示\n" +
                    $"RightAlt+Z: 直前の移動を戻す\n" +
                    $"リスト上でCtrl+マウスホイール: リスト文字サイズ変更";
@@ -131,6 +132,7 @@ public static class UiText
                $"Ctrl+Alt+Arrow keys: resize picker\n" +
                $"Enter: summon selected window\n" +
                $"Double-tap Alt: move cursor to tray\n" +
+               $"Triple-tap Alt: show picker\n" +
                $"RightAlt+Space: show picker\n" +
                $"RightAlt+Z: restore last move\n" +
                $"Ctrl+mouse wheel on the list: change list font size";

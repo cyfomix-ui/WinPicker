@@ -4,15 +4,22 @@ namespace WinPicker;
 
 internal sealed class ModifierChordMouseMover : IDisposable
 {
-    private const int AltDoubleTapMilliseconds = 360;
+    // v0.33:
+    // Count Alt key releases, then wait for this decision window.
+    // 1 tap: no action
+    // 2 taps: move cursor to tray
+    // 3+ taps: move cursor to tray and show WinPicker
+    private const int AltTapDecisionWaitMilliseconds = 750;
 
     private readonly Action _onWinAltChord;
     private readonly Action _onAltDoubleTap;
+    private readonly Action _onAltTripleTap;
     private readonly Action _onRightAltSpace;
     private readonly Action _onRightAltZ;
     private readonly Logger _logger;
     private readonly NativeMethods.LowLevelKeyboardProc _proc;
     private readonly System.Windows.Forms.Timer _winAltChordTimer;
+    private readonly System.Windows.Forms.Timer _altTapDecisionTimer;
     private readonly SynchronizationContext? _syncContext;
 
     private IntPtr _hookHandle;
@@ -23,19 +30,20 @@ internal sealed class ModifierChordMouseMover : IDisposable
     private bool _winAltChordHandled;
     private bool _rightAltSpaceHandled;
     private bool _rightAltZHandled;
-    private int _lastLeftAltUpTick = -100000;
-    private int _lastRightAltUpTick = -100000;
+    private int _altTapCount;
     private bool _disposed;
 
     public ModifierChordMouseMover(
         Action onWinAltChord,
         Action onAltDoubleTap,
+        Action onAltTripleTap,
         Action onRightAltSpace,
         Action onRightAltZ,
         Logger logger)
     {
         _onWinAltChord = onWinAltChord;
         _onAltDoubleTap = onAltDoubleTap;
+        _onAltTripleTap = onAltTripleTap;
         _onRightAltSpace = onRightAltSpace;
         _onRightAltZ = onRightAltZ;
         _logger = logger;
@@ -44,6 +52,9 @@ internal sealed class ModifierChordMouseMover : IDisposable
 
         _winAltChordTimer = new System.Windows.Forms.Timer { Interval = 140 };
         _winAltChordTimer.Tick += OnWinAltChordTimerTick;
+
+        _altTapDecisionTimer = new System.Windows.Forms.Timer { Interval = AltTapDecisionWaitMilliseconds };
+        _altTapDecisionTimer.Tick += OnAltTapDecisionTimerTick;
 
         Install();
     }
@@ -103,9 +114,9 @@ internal sealed class ModifierChordMouseMover : IDisposable
     private bool UpdateKeyState(int key, bool isDown)
     {
         // RightAlt+Space and RightAlt+Z remain as right-side alternatives.
-        // RightAlt alone no longer moves the cursor; Alt double-tap is used instead.
         if (_rightAltDown && isDown && key == NativeMethods.VK_SPACE && !_rightAltSpaceHandled)
         {
+            CancelAltTapSequence();
             _rightAltSpaceHandled = true;
             Post(_onRightAltSpace);
             return true;
@@ -113,6 +124,7 @@ internal sealed class ModifierChordMouseMover : IDisposable
 
         if (_rightAltDown && isDown && key == NativeMethods.VK_Z && !_rightAltZHandled)
         {
+            CancelAltTapSequence();
             _rightAltZHandled = true;
             Post(_onRightAltZ);
             return true;
@@ -124,20 +136,22 @@ internal sealed class ModifierChordMouseMover : IDisposable
         {
             case NativeMethods.VK_LWIN:
                 _leftWinDown = isDown;
+                CancelAltTapSequence();
                 break;
             case NativeMethods.VK_RWIN:
                 _rightWinDown = isDown;
+                CancelAltTapSequence();
                 break;
             case NativeMethods.VK_MENU:
             case NativeMethods.VK_LMENU:
                 if (_leftAltDown && !isDown)
-                    DetectAltDoubleTap(isLeftAlt: true);
+                    RegisterAltTap(isLeftAlt: true);
 
                 _leftAltDown = isDown;
                 break;
             case NativeMethods.VK_RMENU:
                 if (_rightAltDown && !isDown)
-                    DetectAltDoubleTap(isLeftAlt: false);
+                    RegisterAltTap(isLeftAlt: false);
 
                 _rightAltDown = isDown;
                 if (!isDown)
@@ -148,6 +162,8 @@ internal sealed class ModifierChordMouseMover : IDisposable
                 break;
             default:
                 isModifierKey = false;
+                if (isDown)
+                    CancelAltTapSequence();
                 break;
         }
 
@@ -158,27 +174,53 @@ internal sealed class ModifierChordMouseMover : IDisposable
         return false;
     }
 
-    private void DetectAltDoubleTap(bool isLeftAlt)
+    private void RegisterAltTap(bool isLeftAlt)
     {
-        var now = Environment.TickCount;
-        var last = isLeftAlt ? _lastLeftAltUpTick : _lastRightAltUpTick;
-
-        if (unchecked(now - last) >= 0 && unchecked(now - last) <= AltDoubleTapMilliseconds)
+        // Ignore Alt taps that are part of Win+Alt or RightAlt+Space/Z style chords.
+        if (_leftWinDown || _rightWinDown || _rightAltSpaceHandled || _rightAltZHandled)
         {
-            if (isLeftAlt)
-                _lastLeftAltUpTick = -100000;
-            else
-                _lastRightAltUpTick = -100000;
+            CancelAltTapSequence();
+            return;
+        }
 
-            _logger.Info(isLeftAlt ? "Left Alt double-tap detected." : "Right Alt double-tap detected.");
+        _altTapCount++;
+
+        _logger.Info($"{(isLeftAlt ? "Left" : "Right")} Alt released. Tap count={_altTapCount}");
+
+        // Restart the decision timer on every Alt release.
+        // This guarantees the double-tap action does not run before the triple-tap window has expired.
+        _altTapDecisionTimer.Stop();
+        _altTapDecisionTimer.Start();
+    }
+
+    private void OnAltTapDecisionTimerTick(object? sender, EventArgs e)
+    {
+        _altTapDecisionTimer.Stop();
+
+        var count = _altTapCount;
+        CancelAltTapSequence();
+
+        if (count >= 3)
+        {
+            _logger.Info($"Alt tap decision: {count} taps. Move cursor and show picker.");
+            Post(_onAltTripleTap);
+            return;
+        }
+
+        if (count == 2)
+        {
+            _logger.Info("Alt tap decision: 2 taps. Move cursor.");
             Post(_onAltDoubleTap);
             return;
         }
 
-        if (isLeftAlt)
-            _lastLeftAltUpTick = now;
-        else
-            _lastRightAltUpTick = now;
+        _logger.Info($"Alt tap decision: {count} tap. No action.");
+    }
+
+    private void CancelAltTapSequence()
+    {
+        _altTapDecisionTimer.Stop();
+        _altTapCount = 0;
     }
 
     private void UpdateWinAltChord(bool isDown, bool isModifierKey, bool winDown, bool altDown)
@@ -190,8 +232,6 @@ internal sealed class ModifierChordMouseMover : IDisposable
             return;
         }
 
-        // Win+Alt should mean "move the mouse to the tray" only when it is held as a modifier-only chord.
-        // If Space, Z, or another key follows immediately, the normal registered hotkey should handle that action.
         if (!isModifierKey && isDown)
         {
             _winAltChordTimer.Stop();
@@ -237,6 +277,9 @@ internal sealed class ModifierChordMouseMover : IDisposable
         {
             _winAltChordTimer.Stop();
             _winAltChordTimer.Dispose();
+
+            _altTapDecisionTimer.Stop();
+            _altTapDecisionTimer.Dispose();
 
             if (_hookHandle != IntPtr.Zero)
             {

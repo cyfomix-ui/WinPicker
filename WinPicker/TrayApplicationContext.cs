@@ -39,6 +39,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _modifierChordMouseMover = new ModifierChordMouseMover(
             MoveCursorToTrayFromWinAltChord,
             MoveCursorToTrayFromAltDoubleTap,
+            ShowMapFormFromAltTripleTap,
             ShowMapFormFromRightAltSpace,
             RestoreLastMoveFromRightAltZ,
             _logger);
@@ -185,6 +186,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         // Move the cursor when either Left Alt or Right Alt is tapped twice quickly.
         // This avoids moving the cursor on an ordinary single Alt press.
         _ = MoveCursorToTrayAnchor("Alt double-tap");
+    }
+
+    private void ShowMapFormFromAltTripleTap()
+    {
+        var anchor = MoveCursorToTrayAnchor("Alt triple-tap");
+        ShowMapForm(anchor);
     }
 
     private void ShowMapFormFromRightAltSpace()
