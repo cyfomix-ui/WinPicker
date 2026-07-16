@@ -19,6 +19,7 @@ public sealed class WindowEnumerator
         var result = new List<WindowInfo>();
         var currentProcessId = Environment.ProcessId;
         var screens = Screen.AllScreens;
+        var zOrderIndex = 0;
 
         try
         {
@@ -26,7 +27,9 @@ public sealed class WindowEnumerator
             {
                 try
                 {
-                    var info = TryCreateWindowInfo(hWnd, currentProcessId, screens);
+                    var info = TryCreateWindowInfo(hWnd, currentProcessId, screens, zOrderIndex);
+                    zOrderIndex++;
+
                     if (info is not null)
                         result.Add(info);
                 }
@@ -43,14 +46,14 @@ public sealed class WindowEnumerator
             _logger.Error("EnumWindows failed.", ex);
         }
 
-        return result
-            .OrderBy(w => w.MonitorIndex)
-            .ThenBy(w => w.ProcessName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(w => w.Title, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        // EnumWindows returns top-level windows in Z-order from topmost/front to back.
+        // Preserve that order for the right-side list and draw the map back-to-front.
+        // Sorting by monitor/process/title makes the minimap Z-order visually wrong.
+        // ZOrderIndex is assigned while creating WindowInfo.
+        return result;
     }
 
-    private WindowInfo? TryCreateWindowInfo(IntPtr hWnd, int currentProcessId, Screen[] screens)
+    private WindowInfo? TryCreateWindowInfo(IntPtr hWnd, int currentProcessId, Screen[] screens, int zOrderIndex)
     {
         if (hWnd == IntPtr.Zero)
             return null;
@@ -104,7 +107,8 @@ public sealed class WindowEnumerator
             IsMinimized = isMinimized,
             IsMaximized = NativeMethods.IsZoomed(hWnd),
             IsElevated = isElevated,
-            MonitorIndex = monitorIndex
+            MonitorIndex = monitorIndex,
+            ZOrderIndex = zOrderIndex
         };
     }
 

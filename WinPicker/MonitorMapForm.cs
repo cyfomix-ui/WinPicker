@@ -1,4 +1,4 @@
-using System.Drawing.Drawing2D;
+﻿using System.Drawing.Drawing2D;
 
 namespace WinPicker;
 
@@ -18,10 +18,13 @@ public sealed class MonitorMapForm : Form
     private readonly WindowMover _mover;
     private readonly WindowHighlighter _highlighter;
     private readonly WindowMoveHistory _history;
+    private readonly WindowMinimizeHistory _minimizeHistory;
+    private readonly MonitorScreenSaverManager _monitorScreenSaverManager;
     private readonly WindowThumbnailCache _thumbnailCache;
     private readonly GeometrySnapshotService _geometrySnapshots;
     private readonly Action? _openSettingsAction;
     private readonly ToolTip _iconToolTip = new();
+    private readonly PickerOutsideClickCloser? _outsideClickCloser;
     private readonly Image? _headerLogo;
     private readonly List<MappedWindow> _mappedWindows = new();
     private readonly List<MappedMonitor> _mappedMonitors = new();
@@ -41,19 +44,28 @@ public sealed class MonitorMapForm : Form
     private int _listScrollOffset;
     private string _statusMessage = UiText.InitialStatus;
     private bool _contextMenuOpen;
+    private bool _modalDialogOpen;
     private bool _firstPaintCompleted;
+    private DateTime _lastBringToFrontFromHoverUtc = DateTime.MinValue;
+    private string _currentIconToolTipText = string.Empty;
 
-    public MonitorMapForm(AppSettings settings, Logger logger, WindowMoveHistory history, Action? openSettingsAction = null)
+    public MonitorMapForm(AppSettings settings, Logger logger, WindowMoveHistory history, WindowMinimizeHistory minimizeHistory, MonitorScreenSaverManager monitorScreenSaverManager, Action? openSettingsAction = null)
     {
         _settings = settings;
         _logger = logger;
         _history = history;
+        _minimizeHistory = minimizeHistory;
+        _monitorScreenSaverManager = monitorScreenSaverManager;
         _enumerator = new WindowEnumerator(settings, logger);
         _mover = new WindowMover(settings, logger, history);
         _highlighter = new WindowHighlighter(settings, logger);
         _thumbnailCache = new WindowThumbnailCache(logger);
         _geometrySnapshots = new GeometrySnapshotService(logger);
         _openSettingsAction = openSettingsAction;
+
+        if (_settings.ClosePopupOnOutsideClick)
+            _outsideClickCloser = new PickerOutsideClickCloser(this, () => _contextMenuOpen, _logger);
+
         _headerLogo = BrandingImageLoader.LoadImage("CyfomixHeader.png");
 
         Text = UiText.AppTitleWithVersion;
@@ -87,12 +99,12 @@ public sealed class MonitorMapForm : Form
         // v0.3 keeps the picker open while the cursor is inside the mini window.
         Deactivate += (_, _) =>
         {
-            if (_contextMenuOpen)
+            if (_contextMenuOpen || _modalDialogOpen)
                 return;
 
             BeginInvoke(new Action(() =>
             {
-                if (IsDisposed || _contextMenuOpen)
+                if (IsDisposed || _contextMenuOpen || _modalDialogOpen)
                     return;
 
                 var mouseInside = Bounds.Contains(Cursor.Position);
@@ -237,6 +249,7 @@ public sealed class MonitorMapForm : Form
         _highlighter.Dispose();
         _thumbnailCache.Dispose();
         _iconToolTip.Dispose();
+        _outsideClickCloser?.Dispose();
         _headerLogo?.Dispose();
         base.OnFormClosed(e);
     }
@@ -517,7 +530,9 @@ public sealed class MonitorMapForm : Form
     {
         _mappedWindows.Clear();
 
-        for (var i = 0; i < _windows.Count; i++)
+        // _windows is in real Z-order from front to back.
+        // Draw back-to-front so the visible/front window is painted last.
+        for (var i = _windows.Count - 1; i >= 0; i--)
         {
             var window = _windows[i];
             var rect = ToMapRect(window.Bounds);
@@ -684,14 +699,22 @@ public sealed class MonitorMapForm : Form
             var titleHeight = Math.Max(14, (int)Math.Ceiling(listFont.Height * 1.05));
             var processHeight = Math.Max(12, rowRect.Height - titleHeight - 4);
             var charWidth = Math.Max(6.5f, listFont.Size * 0.72f);
+            var itemKey = GetListItemKeyLabel(index);
+            var keyWidth = Math.Max(22, TextRenderer.MeasureText(itemKey, listFont).Width + 8);
+            var keyRect = new Rectangle(rowRect.Left + 6, rowRect.Top + 2, keyWidth, titleHeight);
+            var titleRect = new Rectangle(rowRect.Left + 6 + keyWidth, rowRect.Top + 2, Math.Max(1, rowRect.Width - 18 - keyWidth), titleHeight);
+            var processRect = new Rectangle(rowRect.Left + 6 + keyWidth, rowRect.Top + titleHeight + 1, Math.Max(1, rowRect.Width - 18 - keyWidth), processHeight);
+
             var elevatedPrefix = window.IsElevated ? $"{UiText.ElevatedTag} " : "";
             var titleSource = elevatedPrefix + (window.IsMinimized ? $"{UiText.MinimizedTag} {window.Title}" : window.Title);
-            var title = Shorten(titleSource, Math.Max(16, (int)((_listBounds.Width - 24) / charWidth)));
+            var title = Shorten(titleSource, Math.Max(16, (int)((_listBounds.Width - 24 - keyWidth) / charWidth)));
             var processSource = window.IsMinimized ? $"{window.ProcessName} / {UiText.MinimizedStatus}" : window.ProcessName;
-            var process = Shorten(processSource, Math.Max(16, (int)((_listBounds.Width - 24) / Math.Max(6f, processFont.Size * 0.72f))));
+            var process = Shorten(processSource, Math.Max(16, (int)((_listBounds.Width - 24 - keyWidth) / Math.Max(6f, processFont.Size * 0.72f))));
             var titleColor = window.IsElevated ? Color.FromArgb(255, 222, 145) : window.IsMinimized ? Color.FromArgb(210, 220, 255) : Color.FromArgb(245, 245, 245);
-            TextRenderer.DrawText(g, title, listFont, new Rectangle(rowRect.Left + 6, rowRect.Top + 2, rowRect.Width - 12, titleHeight), titleColor, TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.PreserveGraphicsClipping);
-            TextRenderer.DrawText(g, process, processFont, new Rectangle(rowRect.Left + 6, rowRect.Top + titleHeight + 1, rowRect.Width - 12, processHeight), Color.FromArgb(170, 170, 170), TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.PreserveGraphicsClipping);
+
+            TextRenderer.DrawText(g, itemKey, listFont, keyRect, Color.FromArgb(255, 210, 90), TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.PreserveGraphicsClipping);
+            TextRenderer.DrawText(g, title, listFont, titleRect, titleColor, TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.PreserveGraphicsClipping);
+            TextRenderer.DrawText(g, process, processFont, processRect, Color.FromArgb(170, 170, 170), TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.PreserveGraphicsClipping);
 
             _mappedListItems.Add(new MappedListItem(index, window, rowRect));
             y += rowHeight;
@@ -839,7 +862,7 @@ public sealed class MonitorMapForm : Form
     {
         if (e.Button == MouseButtons.Right)
         {
-            ShowMonitorMenuIfNeeded(e.Location);
+            ShowContextMenuIfNeeded(e.Location);
             return;
         }
 
@@ -913,7 +936,7 @@ public sealed class MonitorMapForm : Form
 
     private bool UpdateIconToolTip(Point location)
     {
-        var text = "";
+        var text = string.Empty;
 
         if (_saveGeometryButtonBounds.Contains(location))
             text = UiText.TooltipSaveLayout;
@@ -924,16 +947,11 @@ public sealed class MonitorMapForm : Form
         else if (_settingsButtonBounds.Contains(location))
             text = UiText.TooltipSettings;
 
-        if (!string.IsNullOrEmpty(text))
+        if (!string.Equals(_currentIconToolTipText, text, StringComparison.Ordinal))
         {
-            if (_iconToolTip.GetToolTip(this) != text)
-                _iconToolTip.SetToolTip(this, text);
-
-            return false;
+            _currentIconToolTipText = text;
+            _iconToolTip.SetToolTip(this, text);
         }
-
-        if (!string.IsNullOrEmpty(_iconToolTip.GetToolTip(this)))
-            _iconToolTip.SetToolTip(this, "");
 
         return false;
     }
@@ -1101,7 +1119,6 @@ public sealed class MonitorMapForm : Form
             if (!item.Bounds.Contains(location))
                 continue;
 
-            _selectedIndex = item.Index;
             SelectAndHighlight(item.Window, Shorten(item.Window.Title, 72));
             if (summon)
                 SummonSelected();
@@ -1116,38 +1133,151 @@ public sealed class MonitorMapForm : Form
     private void SelectAndHighlight(WindowInfo window, string status)
     {
         var index = _windows.IndexOf(window);
+        var selectionChanged = index >= 0 && _selectedIndex != index;
+        var hoverChanged = _hoveredHandle != window.Handle;
+        var statusChanged = !string.Equals(_statusMessage, status, StringComparison.Ordinal);
+
+        // MouseMove fires very frequently. Avoid repainting / SetWindowPos / overlay work
+        // when the cursor is still on the same mapped window or list row.
+        if (!selectionChanged && !hoverChanged && !statusChanged)
+            return;
+
         if (index >= 0)
             _selectedIndex = index;
 
-        if (_hoveredHandle != window.Handle)
+        if (hoverChanged)
         {
             _hoveredHandle = window.Handle;
             _highlighter.Highlight(window);
         }
 
-        _statusMessage = status;
-        EnsureListSelectionVisible();
+        if (statusChanged)
+            _statusMessage = status;
+
+        if (selectionChanged)
+            EnsureListSelectionVisible();
+
         Invalidate();
-        BeginInvoke(new Action(BringPickerToFront));
+
+        if (_settings.KeepPickerFocused && hoverChanged)
+        {
+            var now = DateTime.UtcNow;
+            if (now - _lastBringToFrontFromHoverUtc > TimeSpan.FromMilliseconds(350))
+            {
+                _lastBringToFrontFromHoverUtc = now;
+                BeginInvoke(new Action(BringPickerToFront));
+            }
+        }
     }
 
-    private void ShowMonitorMenuIfNeeded(Point location)
+    private void ShowContextMenuIfNeeded(Point location)
     {
         var monitor = _mappedMonitors.LastOrDefault(m => m.MapBounds.Contains(location));
         if (monitor is null)
             return;
 
+        var mappedWindow = FindMappedWindowAt(location);
         var menu = CreateDarkMenu();
-        var targetItem = new ToolStripMenuItem(UiText.SetThisMonitorAsTarget);
-        targetItem.Click += (_, _) => SetTargetMonitor(monitor);
-        var infoItem = new ToolStripMenuItem(UiText.TargetInfo(monitor.Index + 1, monitor.Screen.DeviceName))
+
+        if (mappedWindow is not null)
         {
-            Enabled = false
+            var canRestoreWindow = mappedWindow.Window.IsMinimized || _minimizeHistory.HasWindow(mappedWindow.Window.Handle);
+            var appItem = CreateDarkMenuItem(canRestoreWindow ? UiText.RestoreThisApp : UiText.MinimizeThisApp);
+            appItem.Click += (_, _) =>
+            {
+                if (canRestoreWindow)
+                    RestoreWindow(mappedWindow.Window);
+                else
+                    MinimizeWindow(mappedWindow.Window);
+            };
+            menu.Items.Add(appItem);
+            menu.Items.Add(new ToolStripSeparator());
+        }
+
+        var targetItem = CreateDarkMenuItem(UiText.SetThisMonitorAsTarget);
+        targetItem.Click += (_, _) => SetTargetMonitor(monitor);
+
+        var monitorKey = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+        var canRestoreMonitor = _minimizeHistory.HasMonitor(monitorKey);
+        var minimizeMonitorAppsItem = CreateDarkMenuItem(canRestoreMonitor ? UiText.RestoreAppsOnThisMonitor : UiText.MinimizeAppsOnThisMonitor);
+        minimizeMonitorAppsItem.Click += (_, _) =>
+        {
+            if (canRestoreMonitor)
+                RestoreWindowsOnMonitor(monitor);
+            else
+                MinimizeWindowsOnMonitor(monitor);
         };
 
+        var saverMenu = CreateDarkMenuItem(UiText.SaverKindMenu);
+        AddSaverKindItem(saverMenu, monitor, "Off", UiText.SaverKindOff);
+        AddSaverKindItem(saverMenu, monitor, "Black", UiText.SaverKindBlack);
+        AddSaverKindItem(saverMenu, monitor, "RandomText", UiText.SaverKindRandomText);
+        AddSaverKindItem(saverMenu, monitor, "Lines", UiText.SaverKindLines);
+        AddSaverKindItem(saverMenu, monitor, "Bubbles", UiText.SaverKindBubbles);
+
+        var idleMenu = CreateDarkMenuItem(UiText.MonitorSaverIdleMenu);
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 0, UiText.MonitorSaverIdleGlobal(_settings.MonitorScreenSaverIdleMinutes));
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 1, UiText.MonitorSaverIdleMinutesItem(1));
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 3, UiText.MonitorSaverIdleMinutesItem(3));
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 5, UiText.MonitorSaverIdleMinutesItem(5));
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 10, UiText.MonitorSaverIdleMinutesItem(10));
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 15, UiText.MonitorSaverIdleMinutesItem(15));
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 30, UiText.MonitorSaverIdleMinutesItem(30));
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 60, UiText.MonitorSaverIdleMinutesItem(60));
+        idleMenu.DropDownItems.Add(new ToolStripSeparator());
+        var customIdleItem = CreateDarkMenuItem(UiText.MonitorSaverIdleCustom);
+        customIdleItem.Click += (_, _) => PromptMonitorIdleMinutes(monitor);
+        idleMenu.DropDownItems.Add(customIdleItem);
+
+        var powerMenu = CreateDarkMenuItem(UiText.MonitorPowerControlMenu);
+        var powerEnabledItem = CreateDarkMenuItem(UiText.MonitorPowerControlEnabled);
+        powerEnabledItem.Checked = GetMonitorPowerControlEnabled(monitor);
+        powerEnabledItem.Click += (_, _) => ToggleMonitorPowerControl(monitor);
+        powerMenu.DropDownItems.Add(powerEnabledItem);
+        var powerIp = GetMonitorPowerControlIp(monitor);
+        var powerIpItem = CreateDarkMenuItem($"{UiText.MonitorPowerControlIp}  [{(string.IsNullOrWhiteSpace(powerIp) ? UiText.MonitorPowerControlIpUnset : powerIp)}]");
+        powerIpItem.Click += (_, _) => PromptMonitorPowerControlIp(monitor);
+        powerMenu.DropDownItems.Add(powerIpItem);
+
+        var runEvenWhenMediaItem = CreateDarkMenuItem(UiText.SaverRunEvenWhenMediaVisible);
+        runEvenWhenMediaItem.Checked = GetRunEvenWhenMediaVisible(monitor);
+        runEvenWhenMediaItem.Click += (_, _) => ToggleRunEvenWhenMediaVisible(monitor);
+
+        var currentKind = GetMonitorSaverKind(monitor);
+        var infoItem = CreateDarkMenuItem(UiText.TargetInfo(monitor.Index + 1, monitor.Screen.DeviceName));
+        infoItem.Enabled = false;
+        var saverInfoItem = CreateDarkMenuItem(UiText.SaverKindSet(monitor.Index + 1, SaverKindDisplayName(currentKind)));
+        saverInfoItem.Enabled = false;
+        var idleInfoItem = CreateDarkMenuItem(UiText.MonitorSaverIdleCurrent(
+            monitor.Index + 1,
+            GetMonitorIdleMinutes(monitor),
+            Math.Clamp(_settings.MonitorScreenSaverIdleMinutes, 1, 240)));
+        idleInfoItem.Enabled = false;
+
         menu.Items.Add(targetItem);
+        menu.Items.Add(minimizeMonitorAppsItem);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(saverMenu);
+        menu.Items.Add(idleMenu);
+        menu.Items.Add(powerMenu);
+        menu.Items.Add(runEvenWhenMediaItem);
+        menu.Items.Add(new ToolStripSeparator());
+
+        if (!string.IsNullOrWhiteSpace(powerIp))
+        {
+            var powerOnItem = CreateDarkMenuItem(UiText.ManualMonitorPowerOn);
+            powerOnItem.Click += (_, _) => RequestMonitorPower(monitor, "on");
+            menu.Items.Add(powerOnItem);
+
+            var powerOffItem = CreateDarkMenuItem(UiText.ManualMonitorPowerOff);
+            powerOffItem.Click += (_, _) => RequestMonitorPower(monitor, "off");
+            menu.Items.Add(powerOffItem);
+            menu.Items.Add(new ToolStripSeparator());
+        }
+
         menu.Items.Add(infoItem);
+        menu.Items.Add(saverInfoItem);
+        menu.Items.Add(idleInfoItem);
         menu.Closed += (_, _) =>
         {
             _contextMenuOpen = false;
@@ -1156,6 +1286,344 @@ public sealed class MonitorMapForm : Form
 
         _contextMenuOpen = true;
         menu.Show(this, location);
+    }
+
+    private MappedWindow? FindMappedWindowAt(Point location)
+    {
+        // _mappedWindows is drawn back-to-front, so walk backwards to pick the visually topmost item.
+        for (var i = _mappedWindows.Count - 1; i >= 0; i--)
+        {
+            if (_mappedWindows[i].MapBounds.Contains(location))
+                return _mappedWindows[i];
+        }
+
+        return null;
+    }
+
+    private void MinimizeWindow(WindowInfo window)
+    {
+        try
+        {
+            ClearHover();
+            var ok = NativeMethods.ShowWindow(window.Handle, NativeMethods.SW_MINIMIZE);
+            if (ok)
+                _minimizeHistory.RecordWindow(window.Handle);
+
+            _statusMessage = UiText.AppMinimized(Shorten(window.Title, 48));
+            _logger.Info($"Window minimized from map menu. hwnd=0x{window.Handle.ToInt64():X} title=\"{window.Title}\" ok={ok}");
+            RefreshWindows();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to minimize selected window from map menu.", ex);
+        }
+    }
+
+    private void RestoreWindow(WindowInfo window)
+    {
+        try
+        {
+            ClearHover();
+            var ok = NativeMethods.ShowWindow(window.Handle, NativeMethods.SW_RESTORE);
+            NativeMethods.SetForegroundWindow(window.Handle);
+            _minimizeHistory.RemoveWindow(window.Handle);
+            _statusMessage = UiText.AppRestored(Shorten(window.Title, 48));
+            _logger.Info($"Window restored from map menu. hwnd=0x{window.Handle.ToInt64():X} title=\"{window.Title}\" ok={ok}");
+            RefreshWindows();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to restore selected window from map menu.", ex);
+        }
+    }
+
+    private void MinimizeWindowsOnMonitor(MappedMonitor monitor)
+    {
+        try
+        {
+            ClearHover();
+
+            var minimizedHandles = new List<IntPtr>();
+            foreach (var window in _windows.ToList())
+            {
+                if (window.IsMinimized)
+                    continue;
+
+                if (!WindowTouchesMonitor(window.Bounds, monitor.Screen.Bounds))
+                    continue;
+
+                if (NativeMethods.ShowWindow(window.Handle, NativeMethods.SW_MINIMIZE))
+                    minimizedHandles.Add(window.Handle);
+            }
+
+            var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+            _minimizeHistory.RecordMonitor(key, minimizedHandles);
+
+            _statusMessage = UiText.MonitorAppsMinimized(monitor.Index + 1, minimizedHandles.Count);
+            _logger.Info($"Monitor windows minimized from map menu. monitor={monitor.Index} count={minimizedHandles.Count}");
+            RefreshWindows();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to minimize monitor windows from map menu.", ex);
+        }
+    }
+
+    private void RestoreWindowsOnMonitor(MappedMonitor monitor)
+    {
+        try
+        {
+            ClearHover();
+
+            var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+            var handles = _minimizeHistory.TakeMonitor(key);
+            var count = 0;
+            foreach (var handle in handles)
+            {
+                if (handle == IntPtr.Zero)
+                    continue;
+
+                if (NativeMethods.ShowWindow(handle, NativeMethods.SW_RESTORE))
+                    count++;
+            }
+
+            _statusMessage = UiText.MonitorAppsRestored(monitor.Index + 1, count);
+            _logger.Info($"Monitor windows restored from map menu. monitor={monitor.Index} count={count}");
+            RefreshWindows();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to restore monitor windows from map menu.", ex);
+        }
+    }
+
+    private static bool WindowTouchesMonitor(Rectangle windowBounds, Rectangle monitorBounds)
+    {
+        var intersection = Rectangle.Intersect(windowBounds, monitorBounds);
+        if (intersection.Width <= 0 || intersection.Height <= 0)
+            return false;
+
+        var windowArea = Math.Max(1.0, (double)windowBounds.Width * windowBounds.Height);
+        var intersectionArea = (double)intersection.Width * intersection.Height;
+
+        return intersectionArea / windowArea >= 0.35;
+    }
+
+    private void AddMonitorIdleMinutesItem(ToolStripMenuItem parent, MappedMonitor monitor, int minutes, string label)
+    {
+        var item = CreateDarkMenuItem(label);
+        item.Checked = GetMonitorIdleMinutes(monitor) == minutes;
+        item.Click += (_, _) => SetMonitorIdleMinutes(monitor, minutes);
+        parent.DropDownItems.Add(item);
+    }
+
+    private int GetMonitorIdleMinutes(MappedMonitor monitor)
+    {
+        _settings.MonitorScreenSaverIdleMinutesByMonitor ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+        if (_settings.MonitorScreenSaverIdleMinutesByMonitor.TryGetValue(key, out var minutes))
+            return Math.Clamp(minutes, 0, 240);
+
+        return 0;
+    }
+
+    private void SetMonitorIdleMinutes(MappedMonitor monitor, int minutes)
+    {
+        try
+        {
+            _settings.MonitorScreenSaverIdleMinutesByMonitor ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+            _settings.MonitorScreenSaverIdleMinutesByMonitor[key] = Math.Clamp(minutes, 0, 240);
+            SettingsService.Save(_settings, _logger);
+            _statusMessage = UiText.MonitorSaverIdleCurrent(
+                monitor.Index + 1,
+                Math.Clamp(minutes, 0, 240),
+                Math.Clamp(_settings.MonitorScreenSaverIdleMinutes, 1, 240));
+            _logger.Info($"Monitor saver idle minutes changed. index={monitor.Index} device=\"{monitor.Screen.DeviceName}\" minutes={minutes}");
+            Invalidate();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to set monitor saver idle minutes.", ex);
+        }
+    }
+
+    private void PromptMonitorIdleMinutes(MappedMonitor monitor)
+    {
+        try
+        {
+            using var dialog = new MonitorIdleMinutesDialog(
+                GetMonitorIdleMinutes(monitor),
+                Math.Clamp(_settings.MonitorScreenSaverIdleMinutes, 1, 240));
+
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+                SetMonitorIdleMinutes(monitor, dialog.IdleMinutes);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to open monitor saver idle minutes dialog.", ex);
+        }
+    }
+
+    private bool GetMonitorPowerControlEnabled(MappedMonitor monitor)
+    {
+        _settings.MonitorPowerControlEnabled ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+        return _settings.MonitorPowerControlEnabled.TryGetValue(key, out var enabled) && enabled;
+    }
+
+    private string GetMonitorPowerControlIp(MappedMonitor monitor)
+    {
+        _settings.MonitorPowerControlIpByMonitor ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+        return _settings.MonitorPowerControlIpByMonitor.TryGetValue(key, out var ip) ? ip?.Trim() ?? string.Empty : string.Empty;
+    }
+
+    private void ToggleMonitorPowerControl(MappedMonitor monitor)
+    {
+        try
+        {
+            _settings.MonitorPowerControlEnabled ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+            var enabled = !GetMonitorPowerControlEnabled(monitor);
+            _settings.MonitorPowerControlEnabled[key] = enabled;
+            SettingsService.Save(_settings, _logger);
+            var ip = GetMonitorPowerControlIp(monitor);
+            _statusMessage = UiText.MonitorPowerControlStatus(monitor.Index + 1, enabled, string.IsNullOrWhiteSpace(ip) ? UiText.MonitorPowerControlIpUnset : ip);
+            _logger.Info($"Monitor power control changed. index={monitor.Index} device=\"{monitor.Screen.DeviceName}\" enabled={enabled} ip=\"{ip}\"");
+            Invalidate();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to toggle monitor power control.", ex);
+        }
+    }
+
+
+    private void RequestMonitorPower(MappedMonitor monitor, string state)
+    {
+        try
+        {
+            var accepted = _monitorScreenSaverManager.RequestPowerState(monitor.Screen, state);
+            _statusMessage = accepted
+                ? UiText.ManualMonitorPowerRequested(monitor.Index + 1, state)
+                : UiText.ManualMonitorPowerUnavailable(monitor.Index + 1);
+            Invalidate();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Failed to request monitor power state. state={state}", ex);
+            _statusMessage = UiText.ManualMonitorPowerUnavailable(monitor.Index + 1);
+            Invalidate();
+        }
+    }
+
+    private void PromptMonitorPowerControlIp(MappedMonitor monitor)
+    {
+        try
+        {
+            using var dialog = new MonitorPowerControlDialog(GetMonitorPowerControlIp(monitor));
+            _modalDialogOpen = true;
+            DialogResult result;
+            try
+            {
+                result = dialog.ShowDialog(this);
+            }
+            finally
+            {
+                _modalDialogOpen = false;
+            }
+
+            if (result != DialogResult.OK)
+                return;
+
+            _settings.MonitorPowerControlIpByMonitor ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+            _settings.MonitorPowerControlIpByMonitor[key] = dialog.DeviceIp;
+            SettingsService.Save(_settings, _logger);
+            var enabled = GetMonitorPowerControlEnabled(monitor);
+            _statusMessage = UiText.MonitorPowerControlStatus(monitor.Index + 1, enabled, string.IsNullOrWhiteSpace(dialog.DeviceIp) ? UiText.MonitorPowerControlIpUnset : dialog.DeviceIp);
+            _logger.Info($"Monitor power control IP changed. index={monitor.Index} device=\"{monitor.Screen.DeviceName}\" ip=\"{dialog.DeviceIp}\"");
+            Invalidate();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to edit monitor power control IP.", ex);
+        }
+    }
+
+    private void AddSaverKindItem(ToolStripMenuItem parent, MappedMonitor monitor, string kind, string label)
+    {
+        var item = CreateDarkMenuItem(label);
+        item.Checked = string.Equals(GetMonitorSaverKind(monitor), kind, StringComparison.OrdinalIgnoreCase);
+        item.Click += (_, _) => SetMonitorSaverKind(monitor, kind);
+        parent.DropDownItems.Add(item);
+    }
+
+    private string GetMonitorSaverKind(MappedMonitor monitor)
+    {
+        _settings.MonitorScreenSaverKinds ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+        if (_settings.MonitorScreenSaverKinds.TryGetValue(key, out var kind))
+            return ScreenSaverOverlayForm.NormalizeKind(kind);
+
+        return "Black";
+    }
+
+    private bool GetRunEvenWhenMediaVisible(MappedMonitor monitor)
+    {
+        _settings.MonitorScreenSaverRunEvenWhenMediaVisible ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+        return _settings.MonitorScreenSaverRunEvenWhenMediaVisible.TryGetValue(key, out var enabled) && enabled;
+    }
+
+    private void ToggleRunEvenWhenMediaVisible(MappedMonitor monitor)
+    {
+        try
+        {
+            _settings.MonitorScreenSaverRunEvenWhenMediaVisible ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+            var enabled = !GetRunEvenWhenMediaVisible(monitor);
+            _settings.MonitorScreenSaverRunEvenWhenMediaVisible[key] = enabled;
+            SettingsService.Save(_settings, _logger);
+            _statusMessage = UiText.SaverRunEvenWhenMediaVisibleSet(monitor.Index + 1, enabled);
+            _logger.Info($"Monitor saver media override changed. index={monitor.Index} device=\"{monitor.Screen.DeviceName}\" enabled={enabled}");
+            Invalidate();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to toggle monitor saver media override.", ex);
+        }
+    }
+
+    private static string SaverKindDisplayName(string kind)
+    {
+        return ScreenSaverOverlayForm.NormalizeKind(kind) switch
+        {
+            "Off" => UiText.SaverKindOff,
+            "RandomText" => UiText.SaverKindRandomText,
+            "Lines" => UiText.SaverKindLines,
+            "Bubbles" => UiText.SaverKindBubbles,
+            _ => UiText.SaverKindBlack
+        };
+    }
+
+    private void SetMonitorSaverKind(MappedMonitor monitor, string kind)
+    {
+        try
+        {
+            _settings.MonitorScreenSaverKinds ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var key = MonitorScreenSaverManager.GetScreenKey(monitor.Screen);
+            _settings.MonitorScreenSaverKinds[key] = ScreenSaverOverlayForm.NormalizeKind(kind);
+            SettingsService.Save(_settings, _logger);
+            _statusMessage = UiText.SaverKindSet(monitor.Index + 1, SaverKindDisplayName(kind));
+            _logger.Info($"Monitor saver kind changed. index={monitor.Index} device=\"{monitor.Screen.DeviceName}\" kind={kind}");
+            Invalidate();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to set monitor saver kind.", ex);
+        }
     }
 
     private void SetTargetMonitor(MappedMonitor monitor)
@@ -1203,11 +1671,13 @@ public sealed class MonitorMapForm : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
+        if (_modalDialogOpen)
+            return base.ProcessCmdKey(ref msg, keyData);
+
         var keyCode = keyData & Keys.KeyCode;
         var ctrl = (keyData & Keys.Control) == Keys.Control;
         var alt = (keyData & Keys.Alt) == Keys.Alt;
         var shift = (keyData & Keys.Shift) == Keys.Shift;
-
         if (keyCode == Keys.Escape)
         {
             Close();
@@ -1252,6 +1722,9 @@ public sealed class MonitorMapForm : Form
 
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
+        if (_modalDialogOpen)
+            return;
+
         if (e.KeyCode == Keys.Escape)
         {
             Close();
@@ -1303,6 +1776,66 @@ public sealed class MonitorMapForm : Form
             e.Handled = true;
             e.SuppressKeyPress = true;
         }
+    }
+
+    public void ToggleWindowByListIndex(int index)
+    {
+        if (index < 0 || index >= _windows.Count)
+        {
+            _statusMessage = UiText.NoRestoreHistory;
+            Invalidate();
+            return;
+        }
+
+        _selectedIndex = index;
+        var window = _windows[index];
+        ClearHover();
+
+        _mover.ToggleSummon(window, out var status);
+        _statusMessage = Shorten(status, 110);
+
+        RefreshWindows();
+
+        if (!IsDisposed)
+            BeginInvoke(new Action(BringPickerToFront));
+    }
+
+    private static bool TryGetListIndexFromHotkey(Keys keyCode, out int index)
+    {
+        index = -1;
+
+        var keyValue = (int)keyCode;
+        if (keyValue >= (int)Keys.D1 && keyValue <= (int)Keys.D9)
+        {
+            index = keyValue - (int)Keys.D1;
+            return true;
+        }
+
+        if (keyValue >= (int)Keys.NumPad1 && keyValue <= (int)Keys.NumPad9)
+        {
+            index = keyValue - (int)Keys.NumPad1;
+            return true;
+        }
+
+        if (keyValue >= (int)Keys.A && keyValue <= (int)Keys.Z)
+        {
+            index = 9 + keyValue - (int)Keys.A;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string GetListItemKeyLabel(int index)
+    {
+        if (index >= 0 && index <= 8)
+            return (index + 1).ToString();
+
+        var letterIndex = index - 9;
+        if (letterIndex >= 0 && letterIndex < 26)
+            return ((char)('a' + letterIndex)).ToString();
+
+        return "?";
     }
 
     private void MovePickerWindow(Keys keyCode, bool fast)

@@ -13,6 +13,7 @@ public sealed class WindowInfo
     public bool IsMaximized { get; init; }
     public bool IsElevated { get; init; }
     public int MonitorIndex { get; init; }
+    public int ZOrderIndex { get; init; }
 
     public override string ToString()
     {

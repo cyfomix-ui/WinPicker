@@ -15,10 +15,12 @@ artifacts/
 release/
 *.zip
 
-# Local work records
+# Local tooling and work records
+.pslocal/
 _Worker/
 _WorkerArchive/
 _WorkHistory/
+_docs/
 AGENTS.md
 
 # Legacy local archives

@@ -1,7 +1,33 @@
-# WinPicker v0.33
+﻿# WinPicker v0.57
 
 WinPicker is a small Windows 11 task-tray utility for multi-monitor environments.
 It shows a dark mini map of all monitors and visible windows. When the right-side list is enabled, window rectangles are thumbnail-first and the list shows window names. When the list is disabled, the mini map switches to text-only rectangles for readability. Click a window in the mini map to summon it to the configured target monitor.
+
+## v0.57 changes
+
+- Opening the monitor map no longer pauses per-monitor screen saver management or closes active saver overlays.
+- When a monitor has a Tapo device IP configured, its context menu now provides manual power On / Off commands below the media override item.
+- Manual power commands reuse the configured Tapo control URL and send `ip=<device IP>&state=on|off`.
+
+## v0.56 changes
+
+- Added the `Show remaining saver time` debug option.
+- Shows a transparent white Impact 14 pt countdown at the upper-right of each eligible monitor during the final 10 minutes before its screen saver starts.
+- Countdown format is `current time  remaining`, for example `21:02  5:00`.
+- The countdown closes on activity, media suppression, saver start, disabled saver mode, or monitor removal.
+
+## v0.55 changes
+
+- Fixed the settings layout so the monitor power delay label no longer overlaps its input field.
+
+## v0.53 changes
+
+- Added configurable `Tapo control URL` (default: `http://127.0.0.1:8900/api/power`).
+- Added a global monitor power delay measured from the moment each monitor screen saver starts.
+- Added per-monitor Tapo power control enable/disable and device IP settings to the monitor context menu.
+- Sends `state=off` after the configured delay and `state=on` when mouse activity dismisses the saver on that monitor.
+- HTTP requests are asynchronous, time out after five seconds, avoid duplicate requests, and log failures without stopping WinPicker.
+
 
 ## Requirements
 
@@ -74,7 +100,7 @@ The settings dialog can configure:
 - Whether mini-map rectangles show captured window preview images
 - Whether a right-side window-name list is always shown
 
-The target monitor is saved by device name where possible, because Windows display numbers do not always match `Screen.AllScreens` order. v0.33 and later write the target monitor to `HKCU\Software\Cyfomix\WinPicker` and reads it back on startup when present.
+The target monitor is saved by device name where possible, because Windows display numbers do not always match `Screen.AllScreens` order. v0.52 and later write the target monitor to `HKCU\Software\Cyfomix\WinPicker` and reads it back on startup when present.
 
 ## appsettings.json
 
@@ -117,14 +143,14 @@ Important fields:
 - Fullscreen games and some special windows may not be movable.
 
 
-## v0.33 changes
+## v0.52 changes
 
 - When the right-side window list is disabled, mini-map window rectangles no longer show thumbnails; they show text labels only.
 - UI language now follows the OS/UI culture: Japanese on Japanese Windows, English on other languages.
 - `WinPickerについて` / `About WinPicker` also switches between Japanese and English.
 - Added GitHub URL to the About dialog: https://github.com/cyfomix-ui/
 
-## v0.33 changes
+## v0.52 changes
 
 - Monitor labels are drawn outside monitor rectangles where possible, so they do not cover thumbnails.
 - `Ctrl+Mouse wheel` over the right-side window list changes the list font size and saves it.
@@ -132,7 +158,7 @@ Important fields:
 - On startup, the registry target monitor is used when available; otherwise WinPicker falls back to `appsettings.json` defaults.
 - Packaged default picker size is now wider/taller for large multi-monitor layouts.
 
-## v0.33 changes
+## v0.52 changes
 
 - The mini-map window rectangles are now thumbnail-first; titles are hidden by default because the right-side list provides names.
 - The default mini picker width is wider to make room for the window-name list.
@@ -140,7 +166,7 @@ Important fields:
 - The app now tries to move the cursor to the actual WinPicker tray icon using `Shell_NotifyIconGetRect`; if that fails, it falls back to the estimated tray area.
 - Added a setting for preferring the exact WinPicker tray icon position.
 
-## v0.33 changes
+## v0.52 changes
 
 - Added best-effort preview images inside each mini-map window rectangle.
 - Added an optional right-side window-name list.
@@ -148,14 +174,14 @@ Important fields:
 - Added a custom purple WinPicker app icon and tray icon.
 - Added settings for preview images and the window-name list.
 
-## v0.33 changes
+## v0.52 changes
 
 - The mini picker stays TOPMOST and keeps keyboard focus while it is visible.
 - `Tab`, arrow keys, `Ctrl+Arrow`, and `Enter` remain usable after moving the selection.
 - Pressing `Win+Alt+Space` moves the mouse cursor to the task tray area before showing the picker, so it opens from a stable location.
 - `Esc` closes the picker and releases focus.
 
-## v0.33 changes
+## v0.52 changes
 
 - Default show hotkey changed to `Win+Alt+Space`.
 - Default restore hotkey changed to `Win+Alt+Z`.
@@ -163,23 +189,23 @@ Important fields:
 - Hover highlight no longer flashes the taskbar icon by default.
 
 
-## v0.33
+## v0.52
 
 - Added Cyfomix about image to the About window.
 - Added a small Cyfomix image before the WinPicker title in the picker header.
 - Kept the existing tray icon unchanged.
 
 
-## v0.33
+## v0.52
 
 - Fixed About window line breaks.
 - Changed the About window to a dark theme.
 - Added a best-effort dark title bar setting for the About window.
 
 
-## v0.33 Single-file publish
+## v0.52 Single-file publish
 
-v0.33 is prepared for a true single-file EXE publish.
+v0.52 is prepared for a true single-file EXE publish.
 
 Settings and logs are stored under:
 
@@ -200,7 +226,7 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 ```
 
 
-## v0.33
+## v0.52
 
 - Reduced the white flash on picker startup.
 - The picker starts at near-zero opacity and becomes visible after the first dark paint completes.
@@ -208,7 +234,7 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Added best-effort dark title bar on the picker window as well.
 
 
-## v0.33
+## v0.52
 
 - Added Win+Alt modifier-only cursor move.
 - Holding Win+Alt for a short moment moves the mouse cursor to the WinPicker tray icon or estimated tray area.
@@ -216,7 +242,7 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Win+Alt+Z keeps the existing restore-last-move behavior.
 
 
-## v0.33
+## v0.52
 
 - Added a right-hand alternative shortcut family.
 - `RightAlt` alone moves the mouse cursor to the task tray area.
@@ -225,7 +251,7 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Note: most `Fn` keys are handled by keyboard hardware and are not exposed to Windows, so WinPicker uses `RightAlt` as the practical right-side alternative.
 
 
-## v0.33
+## v0.52
 
 - Reduced monitor label font size to avoid overlapping text in dense multi-monitor layouts.
 - Increased monitor label reserved band slightly.
@@ -233,7 +259,7 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Clipped the window-list content area and reduced the visible row count to prevent partially drawn bottom text.
 
 
-## v0.33
+## v0.52
 
 - Added Alt double-tap cursor movement:
   - Double-tap Left Alt: move cursor to tray
@@ -246,7 +272,7 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Tightened the window-list drawing clip to prevent partial text at the bottom edge.
 
 
-## v0.33
+## v0.52
 
 - Shows `[管理者]` / `[Admin]` on elevated windows when detectable.
 - Added list-header icon buttons:
@@ -259,7 +285,7 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Desktop icon layout restore is best-effort because it depends on Windows Explorer's desktop ListView internals.
 
 
-## v0.33
+## v0.52
 
 - Moved the geometry/capture icon buttons above the window list frame.
 - Increased icon button size.
@@ -269,7 +295,7 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Tightened bottom list clipping to avoid partial stray text.
 
 
-## v0.33
+## v0.52
 
 - Geometry save now saves immediately using a timestamp name. The name dialog was removed.
 - Added global screenshot hotkey: `Win + Alt + P`.
@@ -277,7 +303,7 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Added stronger cleanup for partial text leaking at the bottom of the window list.
 
 
-## v0.33
+## v0.52
 
 - Fixed geometry restore menu colors.
   - Dark menu background uses white text.
@@ -286,27 +312,27 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Reviewed Japanese/English labels for the newer layout, screenshot, admin, and restore features.
 
 
-## v0.33
+## v0.52
 
 - Added a settings gear icon next to the screenshot icon above the window list.
 - Clicking the gear icon opens the WinPicker settings dialog from the picker window.
 
 
-## v0.33
+## v0.52
 
 - When opening Settings from the picker gear icon, the picker temporarily disables TopMost and input capture.
 - Settings dialog is shown as TopMost while open.
 - After Settings closes, the picker restores its original TopMost state and refreshes the window list.
 
 
-## v0.33
+## v0.52
 
 - When the picker gear icon is clicked, the picker window now hides and closes before opening Settings.
 - This avoids the picker stealing focus from the Settings dialog.
 - Settings dialog explicitly activates itself when shown.
 
 
-## v0.33
+## v0.52
 
 - Shows the current version in the picker title/header, e.g. `WinPicker V0.29`.
 - Swapped footer lines: selected window/status is now above in yellow, key help is below.
@@ -314,21 +340,21 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Added hover tooltips for the list action icons.
 
 
-## v0.33
+## v0.52
 
 - Added Alt triple-tap launcher.
 - Double-tap Alt still moves the mouse cursor near the task tray.
 - Triple-tap Alt moves the cursor near the task tray and shows the picker.
 
 
-## v0.33
+## v0.52
 
 - Made Alt triple-tap easier to trigger by expanding the tap sequence window.
 - Alt double-tap now waits briefly so a third tap can be recognized as triple-tap.
 - Ensured the picker title/header uses the current version dynamically, e.g. `WinPicker V0.31`.
 
 
-## v0.33
+## v0.52
 
 - Reworked Alt tap handling:
   - Waits for the Alt tap decision window.
@@ -338,12 +364,196 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - Updated title/header to `WinPicker V0.32`.
 
 
-## v0.33
+## v0.52
 
 - Alt tap handling changed to a delayed decision model:
   - 1 Alt tap: no action.
   - 2 Alt taps: move cursor to tray.
   - 3 or more Alt taps: move cursor to tray and show WinPicker.
 - Alt taps are now counted on Alt key release.
-- Title/header and assembly/file versions updated to v0.33.
+- Title/header and assembly/file versions updated to v0.52.
 - Added `Publish_WinPicker_v0_33.ps1` to stop old WinPicker processes, verify source version, clean bin/obj, and publish the correct EXE.
+
+
+## v0.52
+
+- Preserves actual Windows Z-order from `EnumWindows` for the list.
+- Draws the minimap back-to-front so front windows are shown on top.
+- Adds item keys to the window list:
+  - 1-9 for the first 9 windows.
+  - a-z for the 10th and later windows.
+- Optional `Win+Alt+item` move/restore:
+  - Enable it in Settings.
+  - `Alt+5` moves item 5 to the target monitor.
+  - If that window is already on the target monitor and has move history, the same key restores it.
+- Optional fixed move size in Settings, such as 1920 x 1600.
+
+
+## v0.52
+
+- Fixed build error CS0121 in `MonitorMapForm.cs`.
+- Removed unnecessary `Math.Ceiling()` around `TextRenderer.MeasureText(...).Width`.
+
+
+## v0.52
+
+- Changed item hotkeys from `Alt+item` to `Win+Alt+item`.
+- Item hotkeys are now handled by the low-level keyboard hook, not by the picker form.
+- This avoids ordinary Alt menu/system handling swallowing `Alt+number`.
+- `Win+Alt+1` to `Win+Alt+9` target list items 1-9.
+- `Win+Alt+A`, `Win+Alt+B`, ... target item 10 and later.
+
+
+## v0.52
+
+- Added outside-click close behavior for the picker panel.
+- When the picker is visible, a mouse click outside the picker window closes it.
+- Mouse movement alone does not close the picker.
+- The context menu is ignored while open, so right-click monitor menus remain usable.
+
+
+## v0.52
+
+- Added XML-based version management with `VersionInfo.xml`.
+- `UiText.AppName`, `UiText.Version`, title/header text, and tray tooltip now read from the XML version file.
+- Tray hover text now shows application name and version, e.g. `WinPicker Ver 0.38`.
+- Added `Build.ps1` to verify XML version binding before publishing.
+
+
+## v0.52
+
+- Renamed the version-specific publish helper to the generic `Build.ps1`.
+- Future WinPicker source packages should use `Build.ps1`.
+- `Build.ps1` stops old WinPicker processes, verifies `VersionInfo.xml`, cleans `bin` / `obj`, publishes win-x64 single EXE, and starts the published EXE unless `-NoRun` is specified.
+
+
+## v0.52
+
+- Replaced WinPicker branding assets with the new uploaded purple WinPicker icon.
+- Updated `App.ico`, `AppIcon.png`, `CyfomixAbout.png`, `CyfomixHeader.png`, and added `WinPickerSplash.png`.
+- The task tray icon, EXE icon, picker window icon, header image, About image, and splash image now use the same icon family.
+- Added a startup splash screen with the new icon on the left and the current app/version text on the right.
+
+
+## v0.52
+
+- Added lightweight per-monitor pseudo screen saver.
+- Global settings:
+  - Enable / disable per-monitor saver.
+  - Shared idle time in minutes for all monitors.
+- Per-monitor setting:
+  - Right-click a monitor in the WinPicker map.
+  - Choose `Saver type`.
+  - Available types: Off, Black, Random text, Lines.
+- The saver is shown only on monitors where the mouse has not entered/moved for the configured idle time.
+- Moving the mouse into a monitor closes that monitor's saver.
+- WinPicker panel visibility pauses saver activation.
+- The manager uses one 1-second timer, and animation timers run only while a saver overlay is visible.
+
+
+## v0.52
+
+- Improved the Random text monitor saver.
+- Text is now displayed at random positions inside the target monitor.
+- It randomly alternates between:
+  - `WinPicker Ver x.xx` + current time
+  - current date + current time
+- Text color and size are randomized on each update.
+
+
+## v0.52
+
+- Random text saver:
+  - Text now stays at one random position for about 15 seconds.
+  - It fades out before moving to the next position.
+  - The second line is center-aligned.
+- Added a new `Bubbles` monitor saver type with lightweight circular drawing.
+
+
+## v0.52
+
+- Added optional media-window suppression for the per-monitor screen saver.
+- New setting:
+  - Do not start saver on monitors with likely video / YouTube windows.
+- Detection is intentionally lightweight and heuristic:
+  - Checks only every 5 seconds.
+  - Detects common video player processes such as VLC, mpv, MPC, PotPlayer, DropMp4, and MvView.
+  - Detects browser windows whose title includes YouTube, Netflix, Twitch, Prime Video, and similar hints.
+- When a media-like window is found on a monitor, that monitor is treated as active and its saver is closed / not started.
+
+
+## v0.52
+
+- Added a per-monitor override in the monitor right-click menu:
+  - `動画サービス稼働中でも起動`
+  - `Start even when video service is active`
+- Default is unchecked for every monitor.
+- When unchecked, the global media suppression setting prevents the saver from starting on monitors with likely video / YouTube windows.
+- When checked for a monitor, that monitor's saver can start even if video / YouTube-like windows are detected there.
+
+
+## v0.52
+
+- Random text saver:
+  - Text now stays at one random position for about 30 seconds.
+  - The existing fade-out behavior before moving is preserved.
+- Includes the v0.52 per-monitor media override:
+  - `動画サービス稼働中でも起動`
+
+
+## v0.52
+
+- Added window / monitor minimize commands to the WinPicker map right-click menu.
+- When right-clicking on a mapped window:
+  - `このアプリを最小化` / `Minimize this app` is shown at the top.
+- When right-clicking a monitor:
+  - `このモニターに移動`
+  - `このモニターのアプリを最小化`
+  - separator
+  - saver settings
+- `このモニターのアプリを最小化` minimizes visible windows that are mostly on that monitor.
+
+
+## v0.52
+
+- The right-click minimize menu now behaves as a toggle when possible.
+- If an app was minimized from the WinPicker map menu, the app menu changes to `このアプリを元に戻す`.
+- If monitor apps were minimized from the monitor menu, the monitor menu changes to `このモニターのアプリを元に戻す`.
+- Restore history is kept while WinPicker is running, even if the picker panel is closed and opened again.
+
+
+## v0.52
+
+- Performance tuning for the WinPicker map panel.
+- Thumbnails are no longer cleared on every window refresh; stale entries are pruned only when windows disappear.
+- Thumbnail capture is budgeted to a few windows per paint so opening the panel remains responsive even with many windows.
+- Mouse hover handling now avoids repeated repaint / focus / highlight work when staying on the same item.
+- Tooltip updates are cached to avoid needless SetToolTip calls during mouse movement.
+- Media suppression logging was reduced to avoid repeated log writes every few seconds.
+- Failed thumbnail captures are cooled down briefly to avoid retry/repaint loops.
+
+
+## v0.52
+
+- Restored full thumbnail capture behavior for the monitor map.
+- Removed the v0.52 per-paint thumbnail capture limit that could leave many windows as blue placeholders.
+- Kept the lighter mouse-hover handling from v0.52 where possible.
+- Window contents should appear in the map again as before.
+
+
+## v0.52
+
+- Added per-monitor idle time for the monitor screen saver.
+- Right-click a monitor and open `このモニターの待機時間`.
+- `0分` means the monitor follows the global idle time from Settings.
+- Non-zero values override the global idle time only for that monitor.
+- Added `TVTest.exe` / `TVTest` to the media-window suppression detection list.
+
+
+## v0.52
+
+- Reduced idle CPU usage for the per-monitor screen saver.
+- When the per-monitor screen saver is disabled, its monitor timer is stopped.
+- When enabled, the lightweight mouse / monitor check still runs once per second.
+- Media / YouTube / TVTest window enumeration now runs at most once every 10 seconds.
+- Media detection is skipped until a monitor is near its saver deadline, or while a saver is active and may need to be closed by media detection.

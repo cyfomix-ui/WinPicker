@@ -70,6 +70,7 @@ public static class SettingsService
             RestoreMinimized = true,
             ClosePopupAfterSummon = true,
             ClosePopupOnDeactivate = false,
+            ClosePopupOnOutsideClick = true,
             PopupWidth = 1440,
             PopupHeight = 800,
             FlashWindowOnHover = false,
@@ -77,6 +78,20 @@ public static class SettingsService
             ShowWindowThumbnails = true,
             ShowWindowTitlesInMap = false,
             ShowWindowList = true,
+            EnableAltItemHotkeys = false,
+            EnableMonitorScreenSaver = false,
+            SuppressMonitorScreenSaverWhenMediaVisible = true,
+            MonitorScreenSaverIdleMinutes = 5,
+            MonitorScreenSaverIdleMinutesByMonitor = new Dictionary<string, int>(),
+            MonitorScreenSaverKinds = new Dictionary<string, string>(),
+            MonitorScreenSaverRunEvenWhenMediaVisible = new Dictionary<string, bool>(),
+            TapoControlUrl = "http://127.0.0.1:8900/api/power",
+            MonitorPowerControlDelayMinutes = 5,
+            MonitorPowerControlEnabled = new Dictionary<string, bool>(),
+            MonitorPowerControlIpByMonitor = new Dictionary<string, string>(),
+            UseSummonSize = false,
+            SummonWidth = 1920,
+            SummonHeight = 1600,
             WindowListWidth = 300,
             WindowListFontSize = 9.0f,
             ExcludeProcesses = new List<string>
@@ -235,6 +250,32 @@ public static class SettingsService
 
         if (settings.WindowListFontSize < 7.0f || settings.WindowListFontSize > 22.0f)
             settings.WindowListFontSize = 9.0f;
+
+        if (settings.SummonWidth < 320 || settings.SummonWidth > 16000)
+            settings.SummonWidth = 1920;
+
+        if (settings.SummonHeight < 200 || settings.SummonHeight > 16000)
+            settings.SummonHeight = 1600;
+
+        if (settings.MonitorScreenSaverIdleMinutes < 1 || settings.MonitorScreenSaverIdleMinutes > 240)
+            settings.MonitorScreenSaverIdleMinutes = 5;
+
+        settings.MonitorScreenSaverIdleMinutesByMonitor ??= new Dictionary<string, int>();
+        foreach (var key in settings.MonitorScreenSaverIdleMinutesByMonitor.Keys.ToList())
+        {
+            var value = settings.MonitorScreenSaverIdleMinutesByMonitor[key];
+            if (value < 0 || value > 240)
+                settings.MonitorScreenSaverIdleMinutesByMonitor[key] = 0;
+        }
+
+        settings.MonitorScreenSaverKinds ??= new Dictionary<string, string>();
+        settings.MonitorScreenSaverRunEvenWhenMediaVisible ??= new Dictionary<string, bool>();
+        if (string.IsNullOrWhiteSpace(settings.TapoControlUrl))
+            settings.TapoControlUrl = "http://127.0.0.1:8900/api/power";
+        if (settings.MonitorPowerControlDelayMinutes < 0 || settings.MonitorPowerControlDelayMinutes > 240)
+            settings.MonitorPowerControlDelayMinutes = 5;
+        settings.MonitorPowerControlEnabled ??= new Dictionary<string, bool>();
+        settings.MonitorPowerControlIpByMonitor ??= new Dictionary<string, string>();
 
         settings.ExcludeProcesses ??= new List<string>();
         settings.ExcludeWindowTitles ??= new List<string>();

@@ -14,6 +14,7 @@ internal sealed class ModifierChordMouseMover : IDisposable
     private readonly Action _onWinAltChord;
     private readonly Action _onAltDoubleTap;
     private readonly Action _onAltTripleTap;
+    private readonly Action<int> _onWinAltItemHotkey;
     private readonly Action _onRightAltSpace;
     private readonly Action _onRightAltZ;
     private readonly Logger _logger;
@@ -30,6 +31,7 @@ internal sealed class ModifierChordMouseMover : IDisposable
     private bool _winAltChordHandled;
     private bool _rightAltSpaceHandled;
     private bool _rightAltZHandled;
+    private readonly HashSet<int> _handledWinAltItemKeys = new();
     private int _altTapCount;
     private bool _disposed;
 
@@ -37,6 +39,7 @@ internal sealed class ModifierChordMouseMover : IDisposable
         Action onWinAltChord,
         Action onAltDoubleTap,
         Action onAltTripleTap,
+        Action<int> onWinAltItemHotkey,
         Action onRightAltSpace,
         Action onRightAltZ,
         Logger logger)
@@ -44,6 +47,7 @@ internal sealed class ModifierChordMouseMover : IDisposable
         _onWinAltChord = onWinAltChord;
         _onAltDoubleTap = onAltDoubleTap;
         _onAltTripleTap = onAltTripleTap;
+        _onWinAltItemHotkey = onWinAltItemHotkey;
         _onRightAltSpace = onRightAltSpace;
         _onRightAltZ = onRightAltZ;
         _logger = logger;
@@ -113,6 +117,31 @@ internal sealed class ModifierChordMouseMover : IDisposable
 
     private bool UpdateKeyState(int key, bool isDown)
     {
+        var winDownBeforeUpdate = _leftWinDown || _rightWinDown;
+        var altDownBeforeUpdate = _leftAltDown || _rightAltDown;
+
+        // v0.36: Win+Alt+item is handled here, not by the picker form.
+        // This avoids ordinary Alt menu/system handling swallowing Alt+number.
+        if (winDownBeforeUpdate && altDownBeforeUpdate && TryGetListIndexFromWinAltItemKey(key, out var itemIndex))
+        {
+            if (isDown)
+            {
+                if (_handledWinAltItemKeys.Add(key))
+                {
+                    CancelAltTapSequence();
+                    _winAltChordTimer.Stop();
+                    _winAltChordHandled = true;
+                    _logger.Info($"Win+Alt item hotkey detected. key=0x{key:X} index={itemIndex}");
+                    Post(() => _onWinAltItemHotkey(itemIndex));
+                }
+
+                return true;
+            }
+
+            _handledWinAltItemKeys.Remove(key);
+            return true;
+        }
+
         // RightAlt+Space and RightAlt+Z remain as right-side alternatives.
         if (_rightAltDown && isDown && key == NativeMethods.VK_SPACE && !_rightAltSpaceHandled)
         {
@@ -136,10 +165,14 @@ internal sealed class ModifierChordMouseMover : IDisposable
         {
             case NativeMethods.VK_LWIN:
                 _leftWinDown = isDown;
+                if (!isDown)
+                    _handledWinAltItemKeys.Clear();
                 CancelAltTapSequence();
                 break;
             case NativeMethods.VK_RWIN:
                 _rightWinDown = isDown;
+                if (!isDown)
+                    _handledWinAltItemKeys.Clear();
                 CancelAltTapSequence();
                 break;
             case NativeMethods.VK_MENU:
@@ -171,6 +204,34 @@ internal sealed class ModifierChordMouseMover : IDisposable
         var altDown = _leftAltDown || _rightAltDown;
 
         UpdateWinAltChord(isDown, isModifierKey, winDown, altDown);
+        return false;
+    }
+
+    private static bool TryGetListIndexFromWinAltItemKey(int key, out int index)
+    {
+        index = -1;
+
+        // Top-row 1-9
+        if (key >= 0x31 && key <= 0x39)
+        {
+            index = key - 0x31;
+            return true;
+        }
+
+        // Numpad 1-9
+        if (key >= 0x61 && key <= 0x69)
+        {
+            index = key - 0x61;
+            return true;
+        }
+
+        // A-Z for 10th and later entries
+        if (key >= 0x41 && key <= 0x5A)
+        {
+            index = 9 + key - 0x41;
+            return true;
+        }
+
         return false;
     }
 

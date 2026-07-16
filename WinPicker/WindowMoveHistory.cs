@@ -5,6 +5,7 @@ public sealed record WindowMoveSnapshot(IntPtr Handle, Rectangle Bounds, bool Wa
 public sealed class WindowMoveHistory
 {
     private readonly object _sync = new();
+    private readonly Dictionary<IntPtr, WindowMoveSnapshot> _byHandle = new();
     private WindowMoveSnapshot? _last;
 
     public bool HasLast
@@ -19,7 +20,11 @@ public sealed class WindowMoveHistory
     public void Record(IntPtr handle, Rectangle bounds, bool wasMaximized, bool wasMinimized, string title)
     {
         lock (_sync)
-            _last = new WindowMoveSnapshot(handle, bounds, wasMaximized, wasMinimized, title);
+        {
+            var snapshot = new WindowMoveSnapshot(handle, bounds, wasMaximized, wasMinimized, title);
+            _last = snapshot;
+            _byHandle[handle] = snapshot;
+        }
     }
 
     public bool TryTake(out WindowMoveSnapshot snapshot)
@@ -34,6 +39,22 @@ public sealed class WindowMoveHistory
 
             snapshot = _last;
             _last = null;
+            _byHandle.Remove(snapshot.Handle);
+            return true;
+        }
+    }
+
+    public bool TryTake(IntPtr handle, out WindowMoveSnapshot snapshot)
+    {
+        lock (_sync)
+        {
+            if (!_byHandle.TryGetValue(handle, out snapshot!))
+                return false;
+
+            _byHandle.Remove(handle);
+            if (_last?.Handle == handle)
+                _last = null;
+
             return true;
         }
     }

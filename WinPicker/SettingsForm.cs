@@ -1,4 +1,4 @@
-namespace WinPicker;
+﻿namespace WinPicker;
 
 public sealed class SettingsForm : Form
 {
@@ -15,6 +15,16 @@ public sealed class SettingsForm : Form
     private readonly CheckBox _keepPickerFocusedCheck = new();
     private readonly CheckBox _showWindowThumbnailsCheck = new();
     private readonly CheckBox _showWindowListCheck = new();
+    private readonly CheckBox _enableAltItemHotkeysCheck = new();
+    private readonly CheckBox _enableMonitorScreenSaverCheck = new();
+    private readonly CheckBox _suppressMonitorScreenSaverWhenMediaVisibleCheck = new();
+    private readonly CheckBox _showMonitorScreenSaverRemainingTimeCheck = new();
+    private readonly TextBox _monitorScreenSaverIdleMinutesText = new();
+    private readonly TextBox _tapoControlUrlText = new();
+    private readonly TextBox _monitorPowerControlDelayMinutesText = new();
+    private readonly CheckBox _useSummonSizeCheck = new();
+    private readonly TextBox _summonWidthText = new();
+    private readonly TextBox _summonHeightText = new();
 
     public SettingsForm(AppSettings settings, Logger logger)
     {
@@ -28,7 +38,7 @@ public sealed class SettingsForm : Form
         MinimizeBox = false;
         ShowInTaskbar = false;
         TopMost = true;
-        ClientSize = new Size(560, 548);
+        ClientSize = new Size(660, 878);
         BackColor = Color.FromArgb(28, 28, 28);
         ForeColor = Color.FromArgb(235, 235, 235);
         Font = new Font("Segoe UI", 9f);
@@ -110,11 +120,63 @@ public sealed class SettingsForm : Form
         _showWindowListCheck.ForeColor = Color.FromArgb(235, 235, 235);
         Controls.Add(_showWindowListCheck);
 
+        _enableAltItemHotkeysCheck.Text = UiText.EnableAltItemHotkeys;
+        _enableAltItemHotkeysCheck.AutoSize = true;
+        _enableAltItemHotkeysCheck.Location = new Point(18, 438);
+        _enableAltItemHotkeysCheck.ForeColor = Color.FromArgb(235, 235, 235);
+        Controls.Add(_enableAltItemHotkeysCheck);
+
+        _enableMonitorScreenSaverCheck.Text = UiText.EnableMonitorScreenSaver;
+        _enableMonitorScreenSaverCheck.AutoSize = true;
+        _enableMonitorScreenSaverCheck.Location = new Point(18, 466);
+        _enableMonitorScreenSaverCheck.ForeColor = Color.FromArgb(235, 235, 235);
+        Controls.Add(_enableMonitorScreenSaverCheck);
+
+        _suppressMonitorScreenSaverWhenMediaVisibleCheck.Text = UiText.SuppressMonitorScreenSaverWhenMediaVisible;
+        _suppressMonitorScreenSaverWhenMediaVisibleCheck.AutoSize = true;
+        _suppressMonitorScreenSaverWhenMediaVisibleCheck.Location = new Point(42, 494);
+        _suppressMonitorScreenSaverWhenMediaVisibleCheck.ForeColor = Color.FromArgb(235, 235, 235);
+        Controls.Add(_suppressMonitorScreenSaverWhenMediaVisibleCheck);
+
+        _showMonitorScreenSaverRemainingTimeCheck.Text = UiText.ShowMonitorScreenSaverRemainingTime;
+        _showMonitorScreenSaverRemainingTimeCheck.AutoSize = true;
+        _showMonitorScreenSaverRemainingTimeCheck.Location = new Point(42, 522);
+        _showMonitorScreenSaverRemainingTimeCheck.ForeColor = Color.FromArgb(235, 235, 235);
+        Controls.Add(_showMonitorScreenSaverRemainingTimeCheck);
+
+        AddLabel(UiText.MonitorScreenSaverIdleMinutes, 42, 554);
+        SetupTextBox(_monitorScreenSaverIdleMinutesText, 260, 550, 72);
+        Controls.Add(_monitorScreenSaverIdleMinutesText);
+
+        AddLabel(UiText.TapoControlUrlSetting, 42, 586);
+        SetupTextBox(_tapoControlUrlText, 260, 582, 350);
+        Controls.Add(_tapoControlUrlText);
+
+        AddLabel(UiText.MonitorPowerControlDelayMinutesSetting, 42, 618);
+        SetupTextBox(_monitorPowerControlDelayMinutesText, 430, 614, 72);
+        Controls.Add(_monitorPowerControlDelayMinutesText);
+
+        _useSummonSizeCheck.Text = UiText.UseSummonSize;
+        _useSummonSizeCheck.AutoSize = true;
+        _useSummonSizeCheck.Location = new Point(18, 650);
+        _useSummonSizeCheck.ForeColor = Color.FromArgb(235, 235, 235);
+        _useSummonSizeCheck.CheckedChanged += (_, _) => UpdateSummonSizeEnabled();
+        Controls.Add(_useSummonSizeCheck);
+
+        AddLabel(UiText.SummonSizeSetting, 42, 684);
+        AddLabel(UiText.SummonWidthSetting, 160, 684);
+        SetupTextBox(_summonWidthText, 196, 680, 72);
+        Controls.Add(_summonWidthText);
+        AddLabel("x", 276, 684);
+        AddLabel(UiText.SummonHeightSetting, 300, 684);
+        SetupTextBox(_summonHeightText, 346, 680, 72);
+        Controls.Add(_summonHeightText);
+
         var hint = new Label
         {
             Text = UiText.HotkeyExample,
             AutoSize = true,
-            Location = new Point(18, 446),
+            Location = new Point(18, 728),
             ForeColor = Color.FromArgb(170, 170, 170)
         };
         Controls.Add(hint);
@@ -123,7 +185,7 @@ public sealed class SettingsForm : Form
         {
             Text = UiText.Save,
             DialogResult = DialogResult.None,
-            Location = new Point(344, 494),
+            Location = new Point(438, 812),
             Size = new Size(82, 28),
             BackColor = Color.FromArgb(55, 86, 125),
             ForeColor = Color.White,
@@ -136,7 +198,7 @@ public sealed class SettingsForm : Form
         {
             Text = UiText.Cancel,
             DialogResult = DialogResult.Cancel,
-            Location = new Point(438, 494),
+            Location = new Point(532, 812),
             Size = new Size(82, 28),
             BackColor = Color.FromArgb(55, 55, 55),
             ForeColor = Color.White,
@@ -187,6 +249,17 @@ public sealed class SettingsForm : Form
         _keepPickerFocusedCheck.Checked = _settings.KeepPickerFocused;
         _showWindowThumbnailsCheck.Checked = _settings.ShowWindowThumbnails;
         _showWindowListCheck.Checked = _settings.ShowWindowList;
+        _enableAltItemHotkeysCheck.Checked = _settings.EnableAltItemHotkeys;
+        _enableMonitorScreenSaverCheck.Checked = _settings.EnableMonitorScreenSaver;
+        _suppressMonitorScreenSaverWhenMediaVisibleCheck.Checked = _settings.SuppressMonitorScreenSaverWhenMediaVisible;
+        _showMonitorScreenSaverRemainingTimeCheck.Checked = _settings.ShowMonitorScreenSaverRemainingTime;
+        _monitorScreenSaverIdleMinutesText.Text = _settings.MonitorScreenSaverIdleMinutes.ToString();
+        _tapoControlUrlText.Text = _settings.TapoControlUrl;
+        _monitorPowerControlDelayMinutesText.Text = _settings.MonitorPowerControlDelayMinutes.ToString();
+        _useSummonSizeCheck.Checked = _settings.UseSummonSize;
+        _summonWidthText.Text = _settings.SummonWidth.ToString();
+        _summonHeightText.Text = _settings.SummonHeight.ToString();
+        UpdateSummonSizeEnabled();
 
         _targetMonitorCombo.Items.Clear();
         _targetMonitorCombo.Items.Add(new MonitorChoice(-1, null, UiText.WindowsPrimaryDisplay));
@@ -262,6 +335,13 @@ public sealed class SettingsForm : Form
         return _popupModeCombo.SelectedItem is PopupModeChoice c ? c.Value : "Cursor";
     }
 
+    private void UpdateSummonSizeEnabled()
+    {
+        var enabled = _useSummonSizeCheck.Checked;
+        _summonWidthText.Enabled = enabled;
+        _summonHeightText.Enabled = enabled;
+    }
+
     private void SaveClicked()
     {
         if (!HotkeyParser.TryParse(_showHotkeyText.Text, out var showHotkey, out var showError))
@@ -285,6 +365,43 @@ public sealed class SettingsForm : Form
             return;
         }
 
+        if (!int.TryParse(_monitorScreenSaverIdleMinutesText.Text.Trim(), out var monitorSaverIdleMinutes) || monitorSaverIdleMinutes < 1 || monitorSaverIdleMinutes > 240)
+        {
+            MessageBox.Show(this, "Screen saver idle time must be between 1 and 240 minutes.", "WinPicker", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            DialogResult = DialogResult.None;
+            return;
+        }
+
+        var tapoControlUrl = _tapoControlUrlText.Text.Trim();
+        if (!Uri.TryCreate(tapoControlUrl, UriKind.Absolute, out var tapoUri) ||
+            (tapoUri.Scheme != Uri.UriSchemeHttp && tapoUri.Scheme != Uri.UriSchemeHttps))
+        {
+            MessageBox.Show(this, UiText.InvalidTapoControlUrl, "WinPicker", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            DialogResult = DialogResult.None;
+            return;
+        }
+
+        if (!int.TryParse(_monitorPowerControlDelayMinutesText.Text.Trim(), out var powerDelayMinutes) || powerDelayMinutes < 0 || powerDelayMinutes > 240)
+        {
+            MessageBox.Show(this, UiText.InvalidMonitorPowerControlDelay, "WinPicker", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            DialogResult = DialogResult.None;
+            return;
+        }
+
+        if (!int.TryParse(_summonWidthText.Text.Trim(), out var summonWidth) || summonWidth < 320 || summonWidth > 16000)
+        {
+            MessageBox.Show(this, "Summon width must be between 320 and 16000.", "WinPicker", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            DialogResult = DialogResult.None;
+            return;
+        }
+
+        if (!int.TryParse(_summonHeightText.Text.Trim(), out var summonHeight) || summonHeight < 200 || summonHeight > 16000)
+        {
+            MessageBox.Show(this, "Summon height must be between 200 and 16000.", "WinPicker", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            DialogResult = DialogResult.None;
+            return;
+        }
+
         _settings.Hotkey = showHotkey.NormalizedText;
         _settings.RestoreHotkey = restoreHotkey.NormalizedText;
         _settings.ClosePopupAfterSummon = _closeAfterSummonCheck.Checked;
@@ -293,6 +410,16 @@ public sealed class SettingsForm : Form
         _settings.KeepPickerFocused = _keepPickerFocusedCheck.Checked;
         _settings.ShowWindowThumbnails = _showWindowThumbnailsCheck.Checked;
         _settings.ShowWindowList = _showWindowListCheck.Checked;
+        _settings.EnableAltItemHotkeys = _enableAltItemHotkeysCheck.Checked;
+        _settings.EnableMonitorScreenSaver = _enableMonitorScreenSaverCheck.Checked;
+        _settings.SuppressMonitorScreenSaverWhenMediaVisible = _suppressMonitorScreenSaverWhenMediaVisibleCheck.Checked;
+        _settings.ShowMonitorScreenSaverRemainingTime = _showMonitorScreenSaverRemainingTimeCheck.Checked;
+        _settings.MonitorScreenSaverIdleMinutes = monitorSaverIdleMinutes;
+        _settings.TapoControlUrl = tapoControlUrl.TrimEnd('?', '&');
+        _settings.MonitorPowerControlDelayMinutes = powerDelayMinutes;
+        _settings.UseSummonSize = _useSummonSizeCheck.Checked;
+        _settings.SummonWidth = summonWidth;
+        _settings.SummonHeight = summonHeight;
 
         if (_targetMonitorCombo.SelectedItem is MonitorChoice target)
         {

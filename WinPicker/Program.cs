@@ -24,10 +24,32 @@ internal static class Program
             return;
         }
 
+        SplashForm? splash = null;
+
         try
         {
+            var splashStartedAt = DateTime.UtcNow;
+            splash = new SplashForm();
+            splash.Show();
+            Application.DoEvents();
+
             var settings = SettingsService.Load(logger);
-            Application.Run(new TrayApplicationContext(settings, logger));
+            var context = new TrayApplicationContext(settings, logger);
+
+            var elapsed = (int)(DateTime.UtcNow - splashStartedAt).TotalMilliseconds;
+            var remaining = 850 - elapsed;
+            if (remaining > 0)
+            {
+                Thread.Sleep(remaining);
+                Application.DoEvents();
+            }
+
+            if (!splash.IsDisposed)
+                splash.Close();
+            splash.Dispose();
+            splash = null;
+
+            Application.Run(context);
         }
         catch (Exception ex)
         {
@@ -40,6 +62,16 @@ internal static class Program
         }
         finally
         {
+            try
+            {
+                if (splash is not null && !splash.IsDisposed)
+                    splash.Dispose();
+            }
+            catch
+            {
+                // Ignore.
+            }
+
             try
             {
                 _mutex?.ReleaseMutex();

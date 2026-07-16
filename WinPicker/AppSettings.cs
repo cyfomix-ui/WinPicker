@@ -1,4 +1,4 @@
-namespace WinPicker;
+﻿namespace WinPicker;
 
 public sealed class AppSettings
 {
@@ -20,6 +20,7 @@ public sealed class AppSettings
     public bool RestoreMinimized { get; set; } = true;
     public bool ClosePopupAfterSummon { get; set; } = true;
     public bool ClosePopupOnDeactivate { get; set; } = false;
+    public bool ClosePopupOnOutsideClick { get; set; } = true;
     public int PopupWidth { get; set; } = 1120;
     public int PopupHeight { get; set; } = 560;
     public bool FlashWindowOnHover { get; set; } = false;
@@ -27,6 +28,21 @@ public sealed class AppSettings
     public bool ShowWindowThumbnails { get; set; } = true;
     public bool ShowWindowTitlesInMap { get; set; } = false;
     public bool ShowWindowList { get; set; } = true;
+    public bool EnableAltItemHotkeys { get; set; } = false;
+    public bool EnableMonitorScreenSaver { get; set; } = false;
+    public bool SuppressMonitorScreenSaverWhenMediaVisible { get; set; } = true;
+    public bool ShowMonitorScreenSaverRemainingTime { get; set; } = false;
+    public int MonitorScreenSaverIdleMinutes { get; set; } = 5;
+    public Dictionary<string, int> MonitorScreenSaverIdleMinutesByMonitor { get; set; } = new();
+    public Dictionary<string, string> MonitorScreenSaverKinds { get; set; } = new();
+    public Dictionary<string, bool> MonitorScreenSaverRunEvenWhenMediaVisible { get; set; } = new();
+    public string TapoControlUrl { get; set; } = "http://127.0.0.1:8900/api/power";
+    public int MonitorPowerControlDelayMinutes { get; set; } = 5;
+    public Dictionary<string, bool> MonitorPowerControlEnabled { get; set; } = new();
+    public Dictionary<string, string> MonitorPowerControlIpByMonitor { get; set; } = new();
+    public bool UseSummonSize { get; set; } = false;
+    public int SummonWidth { get; set; } = 1920;
+    public int SummonHeight { get; set; } = 1600;
     public int WindowListWidth { get; set; } = 300;
     public float WindowListFontSize { get; set; } = 9.0f;
     public List<string> ExcludeProcesses { get; set; } = new();

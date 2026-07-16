@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 
 namespace WinPicker;
 
@@ -14,7 +14,9 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly HotKeyWindow _hotKeyWindow;
     private readonly ModifierChordMouseMover _modifierChordMouseMover;
     private readonly WindowMoveHistory _history = new();
+    private readonly WindowMinimizeHistory _minimizeHistory = new();
     private readonly WindowMover _mover;
+    private readonly MonitorScreenSaverManager _monitorScreenSaverManager;
     private MonitorMapForm? _mapForm;
 
     public TrayApplicationContext(AppSettings settings, Logger logger)
@@ -25,7 +27,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         _notifyIcon = new NotifyIcon
         {
-            Text = "WinPicker",
+            Text = UiText.TrayTooltip,
             Icon = IconLoader.LoadAppIcon(),
             Visible = true,
             ContextMenuStrip = BuildContextMenu()
@@ -40,9 +42,15 @@ public sealed class TrayApplicationContext : ApplicationContext
             MoveCursorToTrayFromWinAltChord,
             MoveCursorToTrayFromAltDoubleTap,
             ShowMapFormFromAltTripleTap,
+            ToggleWindowByWinAltItemHotkey,
             ShowMapFormFromRightAltSpace,
             RestoreLastMoveFromRightAltZ,
             _logger);
+
+        _monitorScreenSaverManager = new MonitorScreenSaverManager(
+            _settings,
+            _logger,
+            () => false);
 
         _logger.Info("WinPicker started.");
     }
@@ -122,12 +130,12 @@ public sealed class TrayApplicationContext : ApplicationContext
             }
 
             var path = ScreenshotCaptureService.CaptureAllScreens(_logger);
-            _notifyIcon.ShowBalloonTip(1800, "WinPicker", UiText.ScreenshotSaved(path), ToolTipIcon.Info);
+            _notifyIcon.ShowBalloonTip(1800, UiText.AppTitleWithVersion, UiText.ScreenshotSaved(path), ToolTipIcon.Info);
         }
         catch (Exception ex)
         {
             _logger.Error("Screenshot hotkey failed.", ex);
-            _notifyIcon.ShowBalloonTip(1800, "WinPicker", UiText.ScreenshotFailed, ToolTipIcon.Warning);
+            _notifyIcon.ShowBalloonTip(1800, UiText.AppTitleWithVersion, UiText.ScreenshotFailed, ToolTipIcon.Warning);
         }
     }
 
@@ -142,7 +150,7 @@ public sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            _mapForm = new MonitorMapForm(_settings, _logger, _history, OpenSettings);
+            _mapForm = new MonitorMapForm(_settings, _logger, _history, _minimizeHistory, _monitorScreenSaverManager, OpenSettings);
             _mapForm.FormClosed += (_, _) => _mapForm = null;
 
             var placement = _settings.PopupPlacementMode ?? "Cursor";
@@ -192,6 +200,36 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         var anchor = MoveCursorToTrayAnchor("Alt triple-tap");
         ShowMapForm(anchor);
+    }
+
+    private void ToggleWindowByWinAltItemHotkey(int index)
+    {
+        try
+        {
+            if (!_settings.EnableAltItemHotkeys)
+            {
+                _logger.Info($"Win+Alt item hotkey ignored because setting is disabled. index={index}");
+                return;
+            }
+
+            var anchor = MoveCursorToTrayAnchor($"Win+Alt item index={index}");
+
+            if (_mapForm is not { IsDisposed: false })
+                ShowMapForm(anchor);
+
+            if (_mapForm is { IsDisposed: false })
+            {
+                _mapForm.BeginInvoke(new Action(() =>
+                {
+                    if (_mapForm is { IsDisposed: false })
+                        _mapForm.ToggleWindowByListIndex(index);
+                }));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Failed to handle Win+Alt item hotkey. index={index}", ex);
+        }
     }
 
     private void ShowMapFormFromRightAltSpace()
@@ -279,7 +317,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             {
                 _notifyIcon.ShowBalloonTip(
                     1800,
-                    "WinPicker",
+                    UiText.AppTitleWithVersion,
                     UiText.NoRestoreHistory,
                     ToolTipIcon.Info);
             }
@@ -298,7 +336,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             if (form.ShowDialog() == DialogResult.OK)
             {
                 RegisterHotKeys();
-                _notifyIcon.ShowBalloonTip(1600, "WinPicker", UiText.SettingsSaved, ToolTipIcon.Info);
+                _monitorScreenSaverManager.ApplySettings();
+                _notifyIcon.ShowBalloonTip(1600, UiText.AppTitleWithVersion, UiText.SettingsSaved, ToolTipIcon.Info);
             }
         }
         catch (Exception ex)
@@ -353,7 +392,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (!HotkeyParser.TryParse(hotkeyText, out var definition, out var error))
         {
             _logger.Warn($"Invalid {label} hotkey: {hotkeyText}. {error}");
-            _notifyIcon.ShowBalloonTip(3000, "WinPicker", UiText.InvalidHotkeyBalloon(label, hotkeyText), ToolTipIcon.Warning);
+            _notifyIcon.ShowBalloonTip(3000, UiText.AppTitleWithVersion, UiText.InvalidHotkeyBalloon(label, hotkeyText), ToolTipIcon.Warning);
             return;
         }
 
@@ -364,7 +403,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _logger.Warn($"RegisterHotKey failed. label={label} hotkey={definition.NormalizedText} Win32Error={win32Error}");
             _notifyIcon.ShowBalloonTip(
                 3000,
-                "WinPicker",
+                UiText.AppTitleWithVersion,
                 UiText.HotkeyRegistrationFailed(label, definition.NormalizedText),
                 ToolTipIcon.Warning);
         }
