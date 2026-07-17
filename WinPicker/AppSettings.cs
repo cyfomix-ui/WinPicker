@@ -40,6 +40,9 @@ public sealed class AppSettings
     public int MonitorPowerControlDelayMinutes { get; set; } = 5;
     public Dictionary<string, bool> MonitorPowerControlEnabled { get; set; } = new();
     public Dictionary<string, string> MonitorPowerControlIpByMonitor { get; set; } = new();
+    public bool EnableLogging { get; set; } = true;
+    public string LogLevel { get; set; } = "Information";
+    public bool EnableDetailedLogging { get; set; } = false;
     public bool UseSummonSize { get; set; } = false;
     public int SummonWidth { get; set; } = 1920;
     public int SummonHeight { get; set; } = 1600;

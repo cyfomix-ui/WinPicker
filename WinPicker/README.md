@@ -1,4 +1,4 @@
-﻿# WinPicker v0.66
+﻿# WinPicker v0.68
 
 ## v0.61
 
@@ -608,3 +608,16 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 ## v0.66
 - セーバー開始時にモニター電源Off予定時刻を確定し、予定到達後にTapo Offを即送信します。失敗時はセーバー稼働中に1分ごとに再送します。
 - Tapo Off要求が成功したモニターは、マップ表示を `MonitorOffTime Off` に切り替えます。
+
+## v0.67
+- 日別動作ログを `%APPDATA%\Cyfomix\WinPicker\logs` に出力します。
+- ログ行は `YY/MM/DD HH:mm:ss`、レベル、呼出元ファイル名・行番号・関数名、動作内容の順で記録します。
+- 設定画面にログ有効化、ログレベル、詳細ログのスイッチを追加しました。
+- 詳細ログでは関数入口や1秒監視など高頻度処理も記録します。
+- 完了した週の日別ログは起動時に `logs\archive` へ週単位ZIPで自動アーカイブします。
+- 例外発生時は例外型、メッセージ、スタックトレースを記録します。
+
+
+## v0.68
+- UI language detection now follows the active Windows UI culture only. Non-Japanese OS/UI modes use English even when Japanese language resources are installed.
+- Localized remaining hard-coded monitor saver, Tapo IP validation, power countdown, and saver-dismiss status strings.

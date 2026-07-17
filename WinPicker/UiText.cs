@@ -5,7 +5,6 @@ namespace WinPicker;
 public static class UiText
 {
     public static bool IsJapanese =>
-        CultureInfo.InstalledUICulture.TwoLetterISOLanguageName.Equals("ja", StringComparison.OrdinalIgnoreCase) ||
         CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("ja", StringComparison.OrdinalIgnoreCase);
 
     public static string AppName => VersionInfoService.Current.AppName;
@@ -58,6 +57,29 @@ public static class UiText
     public static string FooterHelp => IsJapanese
         ? "Esc: 閉じる   F5: 再読込   Tab/矢印: 選択   Enter: 呼び戻し   Win+Alt+項番: 移動/復元"
         : "Esc: close   F5: refresh   Tab/Arrows: select   Enter: summon   Win+Alt+item: move/restore";
+
+    public static string SaverStatusOff => IsJapanese ? "セーバー Off" : "Saver Off";
+    public static string SaverStatusActive(TimeSpan duration) => IsJapanese ? $"セーバー動作中: {FormatDuration(duration)}" : $"Saver active: {FormatDuration(duration)}";
+    public static string SaverStatusUntil(TimeSpan remaining) => IsJapanese ? $"セーバーまで: {FormatDuration(remaining)}" : $"Until saver: {FormatDuration(remaining)}";
+    public static string MonitorOffTimeOff => IsJapanese ? "MonitorOffTime Off" : "MonitorOffTime Off";
+    public static string MonitorOffTimeDelay(int minutes) => IsJapanese ? $"MonitorOffTime +{minutes}分" : $"MonitorOffTime +{minutes}m";
+    public static string SaverDismissedAndPowerOnSent(int monitorNumber) => IsJapanese
+        ? $"モニター {monitorNumber}: セーバーを解除し、電源Onを送信しました。"
+        : $"Monitor {monitorNumber}: saver dismissed and power-on sent.";
+    public static string InvalidIpAddress => IsJapanese ? "有効なIPv4またはIPv6アドレスを入力してください。" : "Enter a valid IPv4 or IPv6 address.";
+    public static string MonitorPowerOffCountdown(DateTime now, int minutes, int seconds) => IsJapanese
+        ? $"{now:HH:mm}  モニターOffまで {minutes}:{seconds:00}"
+        : $"{now:HH:mm}  Monitor off in {minutes}:{seconds:00}";
+
+    private static string FormatDuration(TimeSpan value)
+    {
+        if (value < TimeSpan.Zero)
+            value = TimeSpan.Zero;
+
+        return value.TotalHours >= 1
+            ? $"{(int)value.TotalHours}:{value.Minutes:00}:{value.Seconds:00}"
+            : $"{Math.Max(0, (int)value.TotalMinutes)}:{value.Seconds:00}";
+    }
 
     public static string Monitor(int number) => IsJapanese ? $"モニター {number}" : $"Monitor {number}";
     public static string TargetTag => IsJapanese ? "対象" : "TARGET";
@@ -122,6 +144,10 @@ public static class UiText
     public static string MonitorScreenSaverIdleMinutes => IsJapanese ? "セーバー待機時間（分）" : "Saver idle time (minutes)";
     public static string SuppressMonitorScreenSaverWhenMediaVisible => IsJapanese ? "動画 / YouTube らしいウィンドウがあるモニターでは起動しない" : "Do not start saver on monitors with likely video / YouTube windows";
     public static string ShowMonitorScreenSaverRemainingTime => IsJapanese ? "残時間を表示する" : "Show remaining saver time";
+    public static string EnableLoggingSetting => IsJapanese ? "動作ログを出力する" : "Enable operation logging";
+    public static string LogLevelSetting => IsJapanese ? "ログレベル" : "Log level";
+    public static string EnableDetailedLoggingSetting => IsJapanese ? "詳細ログを出力する（関数入口や高頻度処理を含む）" : "Enable detailed logging (function entry and frequent operations)";
+    public static string LogsArchiveHint => IsJapanese ? @"ログ: %APPDATA%\Cyfomix\WinPicker\logs（完了週は archive へ自動圧縮）" : @"Logs: %APPDATA%\Cyfomix\WinPicker\logs (completed weeks are archived automatically)";
     public static string TapoControlUrlSetting => IsJapanese ? "Tapo制御URL" : "Tapo control URL";
     public static string MonitorPowerControlDelayMinutesSetting => IsJapanese ? "モニター電源制御時間（セーバー開始後・分）" : "Monitor power delay after saver starts (minutes)";
     public static string InvalidTapoControlUrl => IsJapanese ? "Tapo制御URLには http:// または https:// で始まる有効なURLを指定してください。" : "Enter a valid Tapo control URL beginning with http:// or https://.";

@@ -52,6 +52,7 @@ public sealed class MonitorMapForm : Form
 
     public MonitorMapForm(AppSettings settings, Logger logger, WindowMoveHistory history, WindowMinimizeHistory minimizeHistory, MonitorScreenSaverManager monitorScreenSaverManager, Action? openSettingsAction = null)
     {
+        logger.Entry("Create monitor map form");
         _settings = settings;
         _logger = logger;
         _history = history;
@@ -513,16 +514,16 @@ public sealed class MonitorMapForm : Form
 
         var status = _monitorScreenSaverManager.GetDisplayStatus(screen);
         var saverText = !status.SaverConfigured
-            ? "Saver Off"
+            ? UiText.SaverStatusOff
             : status.SaverActive
-                ? $"Saver active: {FormatDurationCompact(status.SaverActiveDuration ?? TimeSpan.Zero)}"
-                : $"Until saver: {FormatDurationCompact(status.UntilSaver ?? TimeSpan.Zero)}";
+                ? UiText.SaverStatusActive(status.SaverActiveDuration ?? TimeSpan.Zero)
+                : UiText.SaverStatusUntil(status.UntilSaver ?? TimeSpan.Zero);
 
         var monitorOffText = status.MonitorPowerOff
-            ? "MonitorOffTime Off"
+            ? UiText.MonitorOffTimeOff
             : status.PowerControlConfigured && status.MonitorOffDelay.HasValue
-                ? $"MonitorOffTime +{FormatDurationMinutes(status.MonitorOffDelay.Value)}"
-                : "MonitorOffTime Off";
+                ? UiText.MonitorOffTimeDelay(Math.Max(0, (int)Math.Round(status.MonitorOffDelay.Value.TotalMinutes)))
+                : UiText.MonitorOffTimeOff;
 
         var headerRect = new Rectangle(screenRect.Left + 3, labelY, Math.Max(1, screenRect.Width - 6), labelLineHeight);
         var infoRect = new Rectangle(screenRect.Left + 3, labelY + labelLineHeight + 1, Math.Max(1, screenRect.Width - 6), infoLineHeight);
@@ -992,7 +993,7 @@ public sealed class MonitorMapForm : Form
             return;
 
         _monitorScreenSaverManager.DismissSaver(monitor.Screen, requestPowerOn: true);
-        _statusMessage = $"Monitor {monitor.Index + 1}: saver dismissed and power-on sent.";
+        _statusMessage = UiText.SaverDismissedAndPowerOnSent(monitor.Index + 1);
         Invalidate();
     }
 

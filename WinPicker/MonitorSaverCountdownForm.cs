@@ -61,7 +61,7 @@ public sealed class MonitorSaverCountdownForm : Form
 
         _label.ForeColor = isPowerOffCountdown ? Color.HotPink : Color.White;
         _label.Text = isPowerOffCountdown
-            ? $"{DateTime.Now:HH:mm}  モニターOffまで {minutesPart}:{secondsPart:00}"
+            ? UiText.MonitorPowerOffCountdown(DateTime.Now, minutesPart, secondsPart)
             : $"{DateTime.Now:HH:mm}  {minutesPart}:{secondsPart:00}";
         _label.PerformLayout();
         ClientSize = _label.PreferredSize;

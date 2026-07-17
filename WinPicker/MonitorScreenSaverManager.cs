@@ -145,6 +145,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
 
     private void Tick()
     {
+        _logger.Entry("Monitor screen saver timer tick");
         try
         {
             if (!_settings.EnableMonitorScreenSaver)
@@ -450,6 +451,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
 
     private void ShowForScreen(Screen screen, string key, string kind)
     {
+        _logger.Entry($"Show saver. screen={key} kind={kind}");
         try
         {
             if (_active.ContainsKey(key))
@@ -492,6 +494,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
 
     private void CloseForScreen(string key)
     {
+        _logger.Entry($"Close saver. screen={key}");
         CloseCountdownForScreen(key);
 
         if (_poweredOffScreens.Contains(key))
@@ -649,6 +652,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
 
     private void QueuePowerRequest(string key, string state, bool requirePowerControlEnabled = true)
     {
+        _logger.Entry($"Queue power request. screen={key} state={state}");
         if (_disposed)
             return;
 
@@ -677,6 +681,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
 
     private async Task SendPowerRequestAsync(string key, string state)
     {
+        _logger.Entry($"Send power request. screen={key} state={state}");
         try
         {
             _settings.MonitorPowerControlIpByMonitor ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

@@ -12,6 +12,7 @@ internal static class Program
         Application.SetCompatibleTextRenderingDefault(false);
 
         using var logger = CreateLogger();
+        logger.Entry("Application startup");
         _mutex = new Mutex(initiallyOwned: true, name: "WinPicker.SingleInstance", out var createdNew);
 
         if (!createdNew)
@@ -34,6 +35,8 @@ internal static class Program
             Application.DoEvents();
 
             var settings = SettingsService.Load(logger);
+            logger.Configure(settings);
+            logger.Info($"WinPicker started. version={UiText.Version}");
             var context = new TrayApplicationContext(settings, logger);
 
             var elapsed = (int)(DateTime.UtcNow - splashStartedAt).TotalMilliseconds;
@@ -62,6 +65,7 @@ internal static class Program
         }
         finally
         {
+            logger.Info("WinPicker shutdown started.");
             try
             {
                 if (splash is not null && !splash.IsDisposed)

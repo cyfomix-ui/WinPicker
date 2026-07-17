@@ -78,7 +78,5 @@ public sealed class MonitorPowerControlDialog : Form
         };
     }
 
-    private static string IsJapaneseText() => UiText.IsJapanese
-        ? "IPv4またはIPv6アドレスを入力してください。"
-        : "Enter a valid IPv4 or IPv6 address.";
+    private static string IsJapaneseText() => UiText.InvalidIpAddress;
 }

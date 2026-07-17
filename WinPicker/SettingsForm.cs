@@ -22,6 +22,9 @@ public sealed class SettingsForm : Form
     private readonly TextBox _monitorScreenSaverIdleMinutesText = new();
     private readonly TextBox _tapoControlUrlText = new();
     private readonly TextBox _monitorPowerControlDelayMinutesText = new();
+    private readonly CheckBox _enableLoggingCheck = new();
+    private readonly ComboBox _logLevelCombo = new();
+    private readonly CheckBox _enableDetailedLoggingCheck = new();
     private readonly CheckBox _useSummonSizeCheck = new();
     private readonly TextBox _summonWidthText = new();
     private readonly TextBox _summonHeightText = new();
@@ -38,7 +41,7 @@ public sealed class SettingsForm : Form
         MinimizeBox = false;
         ShowInTaskbar = false;
         TopMost = true;
-        ClientSize = new Size(660, 878);
+        ClientSize = new Size(660, 984);
         BackColor = Color.FromArgb(28, 28, 28);
         ForeColor = Color.FromArgb(235, 235, 235);
         Font = new Font("Segoe UI", 9f);
@@ -172,11 +175,38 @@ public sealed class SettingsForm : Form
         SetupTextBox(_summonHeightText, 346, 680, 72);
         Controls.Add(_summonHeightText);
 
+        _enableLoggingCheck.Text = UiText.EnableLoggingSetting;
+        _enableLoggingCheck.AutoSize = true;
+        _enableLoggingCheck.Location = new Point(18, 728);
+        _enableLoggingCheck.ForeColor = Color.FromArgb(235, 235, 235);
+        _enableLoggingCheck.CheckedChanged += (_, _) => UpdateLoggingEnabled();
+        Controls.Add(_enableLoggingCheck);
+
+        AddLabel(UiText.LogLevelSetting, 42, 764);
+        SetupCombo(_logLevelCombo, 160, 758, 180);
+        _logLevelCombo.Items.AddRange(new object[] { "Trace", "Debug", "Information", "Warning", "Error", "None" });
+        Controls.Add(_logLevelCombo);
+
+        _enableDetailedLoggingCheck.Text = UiText.EnableDetailedLoggingSetting;
+        _enableDetailedLoggingCheck.AutoSize = true;
+        _enableDetailedLoggingCheck.Location = new Point(42, 794);
+        _enableDetailedLoggingCheck.ForeColor = Color.FromArgb(235, 235, 235);
+        Controls.Add(_enableDetailedLoggingCheck);
+
+        var logHint = new Label
+        {
+            Text = UiText.LogsArchiveHint,
+            AutoSize = true,
+            Location = new Point(42, 824),
+            ForeColor = Color.FromArgb(170, 170, 170)
+        };
+        Controls.Add(logHint);
+
         var hint = new Label
         {
             Text = UiText.HotkeyExample,
             AutoSize = true,
-            Location = new Point(18, 728),
+            Location = new Point(18, 860),
             ForeColor = Color.FromArgb(170, 170, 170)
         };
         Controls.Add(hint);
@@ -185,7 +215,7 @@ public sealed class SettingsForm : Form
         {
             Text = UiText.Save,
             DialogResult = DialogResult.None,
-            Location = new Point(438, 812),
+            Location = new Point(438, 924),
             Size = new Size(82, 28),
             BackColor = Color.FromArgb(55, 86, 125),
             ForeColor = Color.White,
@@ -198,7 +228,7 @@ public sealed class SettingsForm : Form
         {
             Text = UiText.Cancel,
             DialogResult = DialogResult.Cancel,
-            Location = new Point(532, 812),
+            Location = new Point(532, 924),
             Size = new Size(82, 28),
             BackColor = Color.FromArgb(55, 55, 55),
             ForeColor = Color.White,
@@ -256,6 +286,12 @@ public sealed class SettingsForm : Form
         _monitorScreenSaverIdleMinutesText.Text = _settings.MonitorScreenSaverIdleMinutes.ToString();
         _tapoControlUrlText.Text = _settings.TapoControlUrl;
         _monitorPowerControlDelayMinutesText.Text = _settings.MonitorPowerControlDelayMinutes.ToString();
+        _enableLoggingCheck.Checked = _settings.EnableLogging;
+        _logLevelCombo.SelectedItem = string.IsNullOrWhiteSpace(_settings.LogLevel) ? "Information" : _settings.LogLevel;
+        if (_logLevelCombo.SelectedIndex < 0)
+            _logLevelCombo.SelectedItem = "Information";
+        _enableDetailedLoggingCheck.Checked = _settings.EnableDetailedLogging;
+        UpdateLoggingEnabled();
         _useSummonSizeCheck.Checked = _settings.UseSummonSize;
         _summonWidthText.Text = _settings.SummonWidth.ToString();
         _summonHeightText.Text = _settings.SummonHeight.ToString();
@@ -342,6 +378,13 @@ public sealed class SettingsForm : Form
         _summonHeightText.Enabled = enabled;
     }
 
+    private void UpdateLoggingEnabled()
+    {
+        var enabled = _enableLoggingCheck.Checked;
+        _logLevelCombo.Enabled = enabled;
+        _enableDetailedLoggingCheck.Enabled = enabled;
+    }
+
     private void SaveClicked()
     {
         if (!HotkeyParser.TryParse(_showHotkeyText.Text, out var showHotkey, out var showError))
@@ -417,6 +460,9 @@ public sealed class SettingsForm : Form
         _settings.MonitorScreenSaverIdleMinutes = monitorSaverIdleMinutes;
         _settings.TapoControlUrl = tapoControlUrl.TrimEnd('?', '&');
         _settings.MonitorPowerControlDelayMinutes = powerDelayMinutes;
+        _settings.EnableLogging = _enableLoggingCheck.Checked;
+        _settings.LogLevel = _logLevelCombo.SelectedItem?.ToString() ?? "Information";
+        _settings.EnableDetailedLogging = _enableDetailedLoggingCheck.Checked;
         _settings.UseSummonSize = _useSummonSizeCheck.Checked;
         _settings.SummonWidth = summonWidth;
         _settings.SummonHeight = summonHeight;
@@ -443,6 +489,7 @@ public sealed class SettingsForm : Form
 
         SettingsService.Save(_settings, _logger);
         SettingsService.SaveTargetMonitorToRegistry(_settings, _logger);
+        _logger.Configure(_settings);
         _logger.Info("Settings saved from SettingsForm.");
         DialogResult = DialogResult.OK;
         Close();
