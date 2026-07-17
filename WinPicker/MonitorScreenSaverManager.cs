@@ -15,6 +15,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
     private readonly Dictionary<string, MonitorSaverCountdownForm> _countdowns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _mediaSuppressedScreens = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _saverStartedUtc = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> _powerOffDueUtc = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _poweredOffScreens = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _powerRequestsInFlight = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _lastPowerAttemptUtc = new(StringComparer.OrdinalIgnoreCase);
@@ -43,6 +44,81 @@ public sealed class MonitorScreenSaverManager : IDisposable
             StartTimer();
         else
             _logger.Info("Monitor screen saver manager initialized with timer stopped because saver is disabled.");
+    }
+
+    public bool IsSaverActive(Screen screen)
+    {
+        if (screen is null)
+            return false;
+
+        var key = GetScreenKey(screen);
+        return _active.TryGetValue(key, out var form) && !form.IsDisposed && form.Visible;
+    }
+
+    public sealed record MonitorDisplayStatus(
+        bool SaverConfigured,
+        bool SaverActive,
+        TimeSpan? SaverActiveDuration,
+        TimeSpan? UntilSaver,
+        bool PowerControlConfigured,
+        bool MonitorPowerOff,
+        TimeSpan? MonitorOffDelay);
+
+    public MonitorDisplayStatus GetDisplayStatus(Screen screen)
+    {
+        if (screen is null)
+            return new MonitorDisplayStatus(false, false, null, null, false, false, null);
+
+        var key = GetScreenKey(screen);
+        var now = DateTime.UtcNow;
+        var saverConfigured = _settings.EnableMonitorScreenSaver && !string.Equals(GetSaverKind(key), "Off", StringComparison.OrdinalIgnoreCase);
+        var saverActive = IsSaverActive(screen);
+        TimeSpan? saverActiveDuration = null;
+        TimeSpan? untilSaver = null;
+
+        if (saverConfigured)
+        {
+            if (saverActive && _saverStartedUtc.TryGetValue(key, out var startedUtc))
+                saverActiveDuration = now - startedUtc;
+            else
+            {
+                if (!_lastActivity.TryGetValue(key, out var lastActivity))
+                    lastActivity = now;
+
+                var remaining = GetIdleTimeForScreen(key) - (now - lastActivity);
+                if (remaining < TimeSpan.Zero)
+                    remaining = TimeSpan.Zero;
+                untilSaver = remaining;
+            }
+        }
+
+        var powerConfigured = IsPowerControlConfigured(key);
+        var monitorPowerOff = _poweredOffScreens.Contains(key);
+        TimeSpan? powerDelay = powerConfigured && !monitorPowerOff
+            ? TimeSpan.FromMinutes(Math.Clamp(_settings.MonitorPowerControlDelayMinutes, 0, 240))
+            : null;
+
+        return new MonitorDisplayStatus(
+            saverConfigured,
+            saverActive,
+            saverActiveDuration,
+            untilSaver,
+            powerConfigured,
+            monitorPowerOff,
+            powerDelay);
+    }
+
+    public void DismissSaver(Screen screen, bool requestPowerOn)
+    {
+        if (screen is null)
+            return;
+
+        var key = GetScreenKey(screen);
+        CloseForScreen(key);
+        _lastActivity[key] = DateTime.UtcNow;
+
+        if (requestPowerOn && HasPowerEndpoint(key))
+            QueuePowerRequest(key, "on", requirePowerControlEnabled: false);
     }
 
     private void StartTimer()
@@ -139,7 +215,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
 
                 if (_active.ContainsKey(key))
                 {
-                    CloseCountdownForScreen(key);
+                    UpdatePowerOffCountdownForScreen(screen, key, now);
                     TryPowerOffAfterDelay(key, now);
                     continue;
                 }
@@ -384,9 +460,26 @@ public sealed class MonitorScreenSaverManager : IDisposable
             {
                 _active.Remove(key);
                 _saverStartedUtc.Remove(key);
+                _powerOffDueUtc.Remove(key);
             };
             _active[key] = form;
-            _saverStartedUtc[key] = DateTime.UtcNow;
+            var startedUtc = DateTime.UtcNow;
+            _saverStartedUtc[key] = startedUtc;
+            _poweredOffScreens.Remove(key);
+            _lastPowerAttemptUtc.Remove(key);
+            _desiredPowerState.Remove(key);
+
+            if (IsPowerControlConfigured(key))
+            {
+                var delay = TimeSpan.FromMinutes(Math.Clamp(_settings.MonitorPowerControlDelayMinutes, 0, 240));
+                _powerOffDueUtc[key] = startedUtc + delay;
+                _logger.Info($"Monitor power-off scheduled. screen=\"{key}\" dueUtc={_powerOffDueUtc[key]:O} delayMinutes={delay.TotalMinutes:0}");
+            }
+            else
+            {
+                _powerOffDueUtc.Remove(key);
+            }
+
             form.Show();
 
             _logger.Info($"Monitor screen saver shown. screen=\"{key}\" kind={kind}");
@@ -405,6 +498,8 @@ public sealed class MonitorScreenSaverManager : IDisposable
             QueuePowerRequest(key, "on");
 
         _saverStartedUtc.Remove(key);
+        _powerOffDueUtc.Remove(key);
+        _lastPowerAttemptUtc.Remove(key);
         if (!_active.TryGetValue(key, out var form))
             return;
 
@@ -439,10 +534,49 @@ public sealed class MonitorScreenSaverManager : IDisposable
             }
 
             form.UpdateDisplay(remaining);
+            form.EnsureVisibleAboveSaver();
         }
         catch (Exception ex)
         {
             _logger.Error($"Failed to show monitor saver countdown. screen=\"{key}\"", ex);
+            CloseCountdownForScreen(key);
+        }
+    }
+
+    private void UpdatePowerOffCountdownForScreen(Screen screen, string key, DateTime now)
+    {
+        if (!_settings.ShowMonitorScreenSaverRemainingTime ||
+            !IsPowerControlConfigured(key) ||
+            _poweredOffScreens.Contains(key) ||
+            !_powerOffDueUtc.TryGetValue(key, out var dueUtc))
+        {
+            CloseCountdownForScreen(key);
+            return;
+        }
+
+        var remaining = dueUtc - now;
+        if (remaining <= TimeSpan.Zero)
+        {
+            CloseCountdownForScreen(key);
+            return;
+        }
+
+        try
+        {
+            if (!_countdowns.TryGetValue(key, out var form) || form.IsDisposed)
+            {
+                form = new MonitorSaverCountdownForm(screen);
+                form.FormClosed += (_, _) => _countdowns.Remove(key);
+                _countdowns[key] = form;
+                form.Show();
+            }
+
+            form.UpdatePowerOffDisplay(remaining);
+            form.EnsureVisibleAboveSaver();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Failed to show monitor power-off countdown. screen=\"{key}\"", ex);
             CloseCountdownForScreen(key);
         }
     }
@@ -466,14 +600,20 @@ public sealed class MonitorScreenSaverManager : IDisposable
 
     private void TryPowerOffAfterDelay(string key, DateTime now)
     {
-        if (_poweredOffScreens.Contains(key) || !IsPowerControlConfigured(key))
+        if (!IsPowerControlConfigured(key))
             return;
 
-        if (!_saverStartedUtc.TryGetValue(key, out var startedUtc))
-            return;
+        if (!_powerOffDueUtc.TryGetValue(key, out var dueUtc))
+        {
+            if (!_saverStartedUtc.TryGetValue(key, out var startedUtc))
+                return;
 
-        var delay = TimeSpan.FromMinutes(Math.Clamp(_settings.MonitorPowerControlDelayMinutes, 0, 240));
-        if (now - startedUtc >= delay)
+            var delay = TimeSpan.FromMinutes(Math.Clamp(_settings.MonitorPowerControlDelayMinutes, 0, 240));
+            dueUtc = startedUtc + delay;
+            _powerOffDueUtc[key] = dueUtc;
+        }
+
+        if (now >= dueUtc)
             QueuePowerRequest(key, "off");
     }
 
@@ -525,7 +665,9 @@ public sealed class MonitorScreenSaverManager : IDisposable
         }
 
         var now = DateTime.UtcNow;
-        if (state == "off" && _lastPowerAttemptUtc.TryGetValue(key, out var lastAttempt) && now - lastAttempt < TimeSpan.FromSeconds(10))
+        // While the screen saver remains active, repeat the Off command once per minute.
+        // This also recovers from a missed request or a device that was temporarily unreachable.
+        if (state == "off" && _lastPowerAttemptUtc.TryGetValue(key, out var lastAttempt) && now - lastAttempt < TimeSpan.FromMinutes(1))
             return;
 
         _lastPowerAttemptUtc[key] = now;
@@ -550,9 +692,14 @@ public sealed class MonitorScreenSaverManager : IDisposable
             }
 
             if (state == "off")
+            {
                 _poweredOffScreens.Add(key);
+                CloseCountdownForScreen(key);
+            }
             else
+            {
                 _poweredOffScreens.Remove(key);
+            }
 
             _logger.Info($"Tapo power request succeeded. screen=\"{key}\" ip=\"{ip}\" state={state}");
         }

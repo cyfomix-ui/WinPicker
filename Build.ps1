@@ -1,5 +1,6 @@
-param(
+﻿param(
     [string]$ProjectPath = ".\WinPicker\WinPicker.csproj",
+    [switch]$Publish,
     [switch]$NoRun
 )
 
@@ -35,6 +36,17 @@ foreach ($asset in @("App.ico", "AppIcon.png", "CyfomixAbout.png", "CyfomixHeade
     $found = Get-ChildItem -Path . -Recurse -Filter $asset | Select-Object -First 1
     if (-not $found) { throw "$asset was not found." }
     Write-Host "  $($found.FullName)"
+}
+
+Write-Host "Removing obsolete custom idle-time dialog source..." -ForegroundColor Yellow
+$obsoleteSources = @(
+    (Join-Path (Split-Path $ProjectPath -Parent) "MonitorIdleMinutesDialog.cs")
+)
+foreach ($obsoleteSource in $obsoleteSources) {
+    if (Test-Path $obsoleteSource) {
+        Remove-Item $obsoleteSource -Force
+        Write-Host "  Removed: $obsoleteSource" -ForegroundColor DarkYellow
+    }
 }
 
 Write-Host "Cleaning old bin/obj..." -ForegroundColor Yellow

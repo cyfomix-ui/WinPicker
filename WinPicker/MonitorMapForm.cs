@@ -8,7 +8,7 @@ public sealed class MonitorMapForm : Form
     private const int HeaderHeight = 38;
     private const int FooterHeight = 44;
     private const int Gap = 10;
-    private const int MonitorLabelBand = 42;
+    private const int MonitorLabelBand = 52;
     private const int ListRowHeight = 30;
     private const int ListHeaderHeight = 30;
 
@@ -26,6 +26,7 @@ public sealed class MonitorMapForm : Form
     private readonly ToolTip _iconToolTip = new();
     private readonly PickerOutsideClickCloser? _outsideClickCloser;
     private readonly Image? _headerLogo;
+    private readonly System.Windows.Forms.Timer _saverStateRefreshTimer = new();
     private readonly List<MappedWindow> _mappedWindows = new();
     private readonly List<MappedMonitor> _mappedMonitors = new();
     private readonly List<MappedListItem> _mappedListItems = new();
@@ -127,6 +128,16 @@ public sealed class MonitorMapForm : Form
         MouseWheel += OnMouseWheel;
         MouseLeave += (_, _) => ClearHover();
         KeyDown += OnKeyDown;
+
+        // Refresh only the visual saver-state veil while the monitor map is open.
+        // This timer does not affect mouse/keyboard hit testing or saver control.
+        _saverStateRefreshTimer.Interval = 1000;
+        _saverStateRefreshTimer.Tick += (_, _) =>
+        {
+            if (!IsDisposed && Visible)
+                Invalidate();
+        };
+        _saverStateRefreshTimer.Start();
     }
 
     public void ShowAt(Point anchor)
@@ -250,6 +261,8 @@ public sealed class MonitorMapForm : Form
         _thumbnailCache.Dispose();
         _iconToolTip.Dispose();
         _outsideClickCloser?.Dispose();
+        _saverStateRefreshTimer.Stop();
+        _saverStateRefreshTimer.Dispose();
         _headerLogo?.Dispose();
         base.OnFormClosed(e);
     }
@@ -266,6 +279,7 @@ public sealed class MonitorMapForm : Form
         BuildMapGeometry();
         DrawMonitors(g);
         DrawWindows(g);
+        DrawActiveSaverOverlays(g);
         DrawWindowList(g);
         DrawFooter(g);
 
@@ -432,6 +446,34 @@ public sealed class MonitorMapForm : Form
         }
     }
 
+
+    private void DrawActiveSaverOverlays(Graphics g)
+    {
+        foreach (var monitor in _mappedMonitors)
+        {
+            if (!_monitorScreenSaverManager.IsSaverActive(monitor.Screen))
+                continue;
+
+            var rect = monitor.MapBounds;
+            if (rect.Width <= 0 || rect.Height <= 0)
+                continue;
+
+            // A light, semi-transparent veil and fine diagonal hatching indicate
+            // that the real monitor is currently in its individual saver state.
+            // This is drawing only; mapped monitor/window hit areas are unchanged.
+            using var veilBrush = new SolidBrush(Color.FromArgb(44, 225, 225, 235));
+            using var hatchBrush = new HatchBrush(
+                HatchStyle.LightDownwardDiagonal,
+                Color.FromArgb(72, 235, 235, 245),
+                Color.Transparent);
+            using var edgePen = new Pen(Color.FromArgb(125, 225, 225, 240), 1.2f);
+
+            g.FillRectangle(veilBrush, rect);
+            g.FillRectangle(hatchBrush, rect);
+            g.DrawRectangle(edgePen, rect);
+        }
+    }
+
     private void DrawMonitorLabel(
         Graphics g,
         Screen screen,
@@ -443,17 +485,13 @@ public sealed class MonitorMapForm : Form
         Brush subBrush,
         Brush targetBrush)
     {
-        // v0.20: use smaller dedicated monitor-label fonts.
-        // At high DPI / many-monitor layouts, the normal form font can overlap the monitor map.
-        using var monitorFont = new Font(Font.FontFamily, 7.5f, FontStyle.Regular);
-        using var deviceFont = new Font(Font.FontFamily, 7.0f, FontStyle.Regular);
+        using var monitorFont = new Font(Font.FontFamily, 7.4f, FontStyle.Regular);
+        using var infoFont = new Font(Font.FontFamily, 6.8f, FontStyle.Regular);
 
         var labelLineHeight = Math.Max(12, TextRenderer.MeasureText("Hg", monitorFont).Height - 3);
-        var deviceLineHeight = Math.Max(11, TextRenderer.MeasureText("Hg", deviceFont).Height - 4);
-        var labelBlockHeight = labelLineHeight + deviceLineHeight + 2;
+        var infoLineHeight = Math.Max(10, TextRenderer.MeasureText("Hg", infoFont).Height - 4);
+        var labelBlockHeight = labelLineHeight + infoLineHeight + 4;
 
-        // v0.12: place labels above monitors in the upper row and below monitors in the lower row.
-        // This keeps labels away from thumbnails while following the visual grid more naturally.
         var rowPivot = GetMonitorRowPivot();
         var monitorCenterY = screenRect.Top + (screenRect.Height / 2f);
         var isUpperRow = monitorCenterY <= rowPivot;
@@ -462,7 +500,6 @@ public sealed class MonitorMapForm : Form
             ? screenRect.Top - labelBlockHeight - 3
             : screenRect.Bottom + 3;
 
-        // Fallback for very small picker sizes: draw just inside the monitor.
         if (labelY < HeaderHeight + 2 || labelY + labelBlockHeight > ClientSize.Height - FooterHeight)
             labelY = isUpperRow ? screenRect.Top + 4 : Math.Max(screenRect.Top + 4, screenRect.Bottom - labelBlockHeight - 4);
 
@@ -472,24 +509,74 @@ public sealed class MonitorMapForm : Form
         if (isPrimary)
             label += $"  [{UiText.PrimaryTag}]";
 
-        var labelRect = new Rectangle(screenRect.Left + 3, labelY, Math.Max(1, screenRect.Width - 6), labelLineHeight);
-        var deviceRect = new Rectangle(screenRect.Left + 3, labelY + labelLineHeight + 1, Math.Max(1, screenRect.Width - 6), deviceLineHeight);
+        var headerText = $"{label}  {screen.DeviceName}";
+
+        var status = _monitorScreenSaverManager.GetDisplayStatus(screen);
+        var saverText = !status.SaverConfigured
+            ? "Saver Off"
+            : status.SaverActive
+                ? $"Saver active: {FormatDurationCompact(status.SaverActiveDuration ?? TimeSpan.Zero)}"
+                : $"Until saver: {FormatDurationCompact(status.UntilSaver ?? TimeSpan.Zero)}";
+
+        var monitorOffText = status.MonitorPowerOff
+            ? "MonitorOffTime Off"
+            : status.PowerControlConfigured && status.MonitorOffDelay.HasValue
+                ? $"MonitorOffTime +{FormatDurationMinutes(status.MonitorOffDelay.Value)}"
+                : "MonitorOffTime Off";
+
+        var headerRect = new Rectangle(screenRect.Left + 3, labelY, Math.Max(1, screenRect.Width - 6), labelLineHeight);
+        var infoRect = new Rectangle(screenRect.Left + 3, labelY + labelLineHeight + 1, Math.Max(1, screenRect.Width - 6), infoLineHeight);
 
         TextRenderer.DrawText(
             g,
-            label,
+            headerText,
             monitorFont,
-            labelRect,
+            headerRect,
             isTarget ? Color.FromArgb(255, 210, 90) : Color.FromArgb(235, 235, 235),
             TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding);
 
+        var saverColor = !status.SaverConfigured
+            ? Color.FromArgb(190, 190, 190)
+            : status.SaverActive ? Color.FromArgb(255, 186, 216) : Color.FromArgb(196, 222, 255);
+        var powerColor = status.MonitorPowerOff ? Color.FromArgb(190, 190, 190) : status.PowerControlConfigured ? Color.FromArgb(255, 176, 210) : Color.FromArgb(160, 160, 160);
+
         TextRenderer.DrawText(
             g,
-            screen.DeviceName,
-            deviceFont,
-            deviceRect,
-            Color.FromArgb(170, 170, 170),
+            saverText,
+            infoFont,
+            infoRect,
+            saverColor,
             TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding);
+
+        var saverWidth = TextRenderer.MeasureText(g, saverText + "  ", infoFont, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Width;
+        var powerRect = new Rectangle(infoRect.Left + saverWidth + 4, infoRect.Top, Math.Max(1, infoRect.Width - saverWidth - 4), infoRect.Height);
+
+        TextRenderer.DrawText(
+            g,
+            monitorOffText,
+            infoFont,
+            powerRect,
+            powerColor,
+            TextFormatFlags.EndEllipsis | TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding);
+    }
+
+    private static string FormatDurationCompact(TimeSpan value)
+    {
+        if (value < TimeSpan.Zero)
+            value = TimeSpan.Zero;
+
+        return value.TotalHours >= 1
+            ? $"{(int)value.TotalHours}:{value.Minutes:00}:{value.Seconds:00}"
+            : $"{Math.Max(0, (int)value.TotalMinutes)}:{value.Seconds:00}";
+    }
+
+    private static string FormatDurationMinutes(TimeSpan value)
+    {
+        if (value < TimeSpan.Zero)
+            value = TimeSpan.Zero;
+
+        var totalMinutes = Math.Max(0, (int)Math.Round(value.TotalMinutes));
+        return totalMinutes + "m";
     }
 
     private float GetMonitorRowPivot()
@@ -888,8 +975,25 @@ public sealed class MonitorMapForm : Form
 
     private void OnMouseDoubleClick(object? sender, MouseEventArgs e)
     {
-        if (e.Button == MouseButtons.Left)
-            TrySelectListItem(e.Location, summon: true);
+        if (e.Button != MouseButtons.Left)
+            return;
+
+        if (TrySelectListItem(e.Location, summon: true))
+            return;
+
+        if (FindMappedWindowAt(e.Location) is not null)
+            return;
+
+        var monitor = _mappedMonitors.LastOrDefault(m => m.MapBounds.Contains(e.Location));
+        if (monitor is null)
+            return;
+
+        if (!_monitorScreenSaverManager.IsSaverActive(monitor.Screen))
+            return;
+
+        _monitorScreenSaverManager.DismissSaver(monitor.Screen, requestPowerOn: true);
+        _statusMessage = $"Monitor {monitor.Index + 1}: saver dismissed and power-on sent.";
+        Invalidate();
     }
 
     private void OnMouseWheel(object? sender, MouseEventArgs e)
@@ -1224,10 +1328,10 @@ public sealed class MonitorMapForm : Form
         AddMonitorIdleMinutesItem(idleMenu, monitor, 15, UiText.MonitorSaverIdleMinutesItem(15));
         AddMonitorIdleMinutesItem(idleMenu, monitor, 30, UiText.MonitorSaverIdleMinutesItem(30));
         AddMonitorIdleMinutesItem(idleMenu, monitor, 60, UiText.MonitorSaverIdleMinutesItem(60));
-        idleMenu.DropDownItems.Add(new ToolStripSeparator());
-        var customIdleItem = CreateDarkMenuItem(UiText.MonitorSaverIdleCustom);
-        customIdleItem.Click += (_, _) => PromptMonitorIdleMinutes(monitor);
-        idleMenu.DropDownItems.Add(customIdleItem);
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 90, UiText.MonitorSaverIdleMinutesItem(90));
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 120, UiText.MonitorSaverIdleMinutesItem(120));
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 150, UiText.MonitorSaverIdleMinutesItem(150));
+        AddMonitorIdleMinutesItem(idleMenu, monitor, 180, UiText.MonitorSaverIdleMinutesItem(180));
 
         var powerMenu = CreateDarkMenuItem(UiText.MonitorPowerControlMenu);
         var powerEnabledItem = CreateDarkMenuItem(UiText.MonitorPowerControlEnabled);
@@ -1445,23 +1549,6 @@ public sealed class MonitorMapForm : Form
         catch (Exception ex)
         {
             _logger.Error("Failed to set monitor saver idle minutes.", ex);
-        }
-    }
-
-    private void PromptMonitorIdleMinutes(MappedMonitor monitor)
-    {
-        try
-        {
-            using var dialog = new MonitorIdleMinutesDialog(
-                GetMonitorIdleMinutes(monitor),
-                Math.Clamp(_settings.MonitorScreenSaverIdleMinutes, 1, 240));
-
-            if (dialog.ShowDialog(this) == DialogResult.OK)
-                SetMonitorIdleMinutes(monitor, dialog.IdleMinutes);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error("Failed to open monitor saver idle minutes dialog.", ex);
         }
     }
 

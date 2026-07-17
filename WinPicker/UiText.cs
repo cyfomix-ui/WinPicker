@@ -83,9 +83,6 @@ public static class UiText
     public static string MonitorSaverIdleMenu => IsJapanese ? "このモニターの待機時間" : "Idle time for this monitor";
     public static string MonitorSaverIdleGlobal(int globalMinutes) => IsJapanese ? $"0分（全体設定: {globalMinutes}分）" : $"0 min (global: {globalMinutes} min)";
     public static string MonitorSaverIdleMinutesItem(int minutes) => IsJapanese ? $"{minutes}分" : $"{minutes} min";
-    public static string MonitorSaverIdleCustom => IsJapanese ? "カスタム入力..." : "Custom...";
-    public static string MonitorSaverIdleDialogTitle => IsJapanese ? "このモニターの待機時間" : "Idle time for this monitor";
-    public static string MonitorSaverIdleDialogMessage => IsJapanese ? "0分なら設定画面の全体待機時間を使います。" : "Use 0 minutes to follow the global idle time from Settings.";
     public static string MonitorSaverIdleCurrent(int monitorNumber, int minutes, int globalMinutes) => IsJapanese
         ? $"モニター {monitorNumber} の待機時間: {(minutes <= 0 ? $"全体設定({globalMinutes}分)" : $"{minutes}分")}"
         : $"Monitor {monitorNumber} idle time: {(minutes <= 0 ? $"global ({globalMinutes} min)" : $"{minutes} min")}";

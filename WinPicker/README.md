@@ -1,7 +1,25 @@
-﻿# WinPicker v0.57
+﻿# WinPicker v0.66
+
+## v0.61
+
+- 廃止したカスタム待機時間ダイアログの旧ソース `MonitorIdleMinutesDialog.cs` が既存フォルダーに残っていても、`Build.ps1` が公開前に自動削除するよう修正しました。
+- `Build.ps1 -Publish` の呼び出しを明示的に受け付けるようにしました。
+
+
+- The per-monitor saver wait-time dialog now offers 90, 120, 150, and 180 minute choices, while still allowing direct numeric entry from 0 to 240 minutes.
+- The pink monitor power-off countdown is explicitly kept above the screen-saver overlay.
+- After the configured power-off delay expires, WinPicker repeats the Tapo Off request once per minute while that monitor's screen saver remains active. This provides retry behavior when the first request is missed or the device is temporarily unreachable.
+
+# WinPicker v0.58
 
 WinPicker is a small Windows 11 task-tray utility for multi-monitor environments.
 It shows a dark mini map of all monitors and visible windows. When the right-side list is enabled, window rectangles are thumbnail-first and the list shows window names. When the list is disabled, the mini map switches to text-only rectangles for readability. Click a window in the mini map to summon it to the configured target monitor.
+
+## v0.58 changes
+
+- While the per-monitor screen saver is active and the debug remaining-time display is enabled, WinPicker now shows the remaining time until the configured Tapo monitor power-off action.
+- The power-off countdown uses the same position and font as the saver countdown, with pink text: `current time  Monitor Off in m:ss`.
+- The power-off countdown is shown only for monitors whose automatic power control is enabled and whose Tapo device IP/control URL are configured.
 
 ## v0.57 changes
 
@@ -27,6 +45,12 @@ It shows a dark mini map of all monitors and visible windows. When the right-sid
 - Added per-monitor Tapo power control enable/disable and device IP settings to the monitor context menu.
 - Sends `state=off` after the configured delay and `state=on` when mouse activity dismisses the saver on that monitor.
 - HTTP requests are asynchronous, time out after five seconds, avoid duplicate requests, and log failures without stopping WinPicker.
+
+## TapoCtrl integration
+
+WinPicker sends monitor power commands through the `/api/power` endpoint provided by [TapoCtrl](https://github.com/cyfomix-ui/TapoCtrl). Configure a Tapo device IP for each monitor, then WinPicker can send `state=off` after the screen-saver delay and `state=on` when the saver is dismissed. The same endpoint is used by the monitor context menu's manual On/Off commands.
+
+TapoCtrl defaults to `http://127.0.0.1:8080/api/power`, while WinPicker's bundled `appsettings.json` currently defaults to `http://127.0.0.1:8900/api/power`. Change either WinPicker's `Tapo control URL` or TapoCtrl's web-server port so they match. When TapoCtrl runs on another PC, use that PC's LAN address and configure its bind setting and firewall. Do not expose the unauthenticated API directly to an untrusted network.
 
 
 ## Requirements
@@ -557,3 +581,30 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 - When enabled, the lightweight mouse / monitor check still runs once per second.
 - Media / YouTube / TVTest window enumeration now runs at most once every 10 seconds.
 - Media detection is skipped until a monitor is near its saver deadline, or while a saver is active and may need to be closed by media detection.
+
+## v0.60
+
+- Added 90, 120, 150, and 180 minute choices directly to the per-monitor idle-time submenu.
+- Removed the custom idle-time input dialog.
+
+
+
+## v0.64
+- `MonitorDisplayStatus` の電源Off待機時間を nullable `TimeSpan?` として明示し、CS0173ビルドエラーを修正しました。
+
+## v0.63
+- モニターマップの各モニター外周ラベルに、`Saver active: xx` / `Until saver: yy` / `Saver Off` を表示します。
+- 併せて `MonitorOffTime: zz` を表示し、Tapo電源制御が有効なモニターでは設定中のOff待機時間、未設定時は `Off` を表示します。
+- スクリーンセーバー稼働中のモニターで、ウィンドウがない空き領域をダブルクリックすると、そのモニターのスクリーンセーバーを解除し、TapoのOnコマンドを送信します。
+
+## v0.62
+- モニターマップ表示時、個別スクリーンセーバー稼働中のモニターに薄い半透明の網掛けを表示します。表示のみで、クリック・右クリック・ドラッグなどの操作には影響しません。
+
+## v0.65
+- モニター外周ラベルを2段表示へ整理しました。
+- 1段目は `モニターN  \\.\DISPLAYx`、2段目は `Until saver / Saver active / Saver Off` と `MonitorOffTime` を同じ行に表示します。
+
+
+## v0.66
+- セーバー開始時にモニター電源Off予定時刻を確定し、予定到達後にTapo Offを即送信します。失敗時はセーバー稼働中に1分ごとに再送します。
+- Tapo Off要求が成功したモニターは、マップ表示を `MonitorOffTime Off` に切り替えます。

@@ -42,13 +42,27 @@ public sealed class MonitorSaverCountdownForm : Form
 
     public void UpdateDisplay(TimeSpan remaining)
     {
+        UpdateDisplayCore(remaining, isPowerOffCountdown: false);
+    }
+
+    public void UpdatePowerOffDisplay(TimeSpan remaining)
+    {
+        UpdateDisplayCore(remaining, isPowerOffCountdown: true);
+    }
+
+    private void UpdateDisplayCore(TimeSpan remaining, bool isPowerOffCountdown)
+    {
         if (IsDisposed)
             return;
 
         var seconds = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
         var minutesPart = seconds / 60;
         var secondsPart = seconds % 60;
-        _label.Text = $"{DateTime.Now:HH:mm}  {minutesPart}:{secondsPart:00}";
+
+        _label.ForeColor = isPowerOffCountdown ? Color.HotPink : Color.White;
+        _label.Text = isPowerOffCountdown
+            ? $"{DateTime.Now:HH:mm}  モニターOffまで {minutesPart}:{secondsPart:00}"
+            : $"{DateTime.Now:HH:mm}  {minutesPart}:{secondsPart:00}";
         _label.PerformLayout();
         ClientSize = _label.PreferredSize;
 
@@ -56,6 +70,20 @@ public sealed class MonitorSaverCountdownForm : Form
         Location = new Point(
             Math.Max(area.Left, area.Right - Width - 16),
             area.Top + 12);
+    }
+
+
+    public void EnsureVisibleAboveSaver()
+    {
+        if (IsDisposed || !IsHandleCreated)
+            return;
+
+        const uint SWP_NOMOVE = 0x0002;
+        const uint SWP_NOSIZE = 0x0001;
+        const uint SWP_NOACTIVATE = 0x0010;
+        const uint SWP_SHOWWINDOW = 0x0040;
+        NativeMethods.SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 
     private static Font CreateDisplayFont()
