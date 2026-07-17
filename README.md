@@ -2,6 +2,10 @@
 
 [English](#english)
 
+## メインパネル / Main panel
+
+![WinPickerのメインパネル](./_docs/images/MainPanel.png)
+
 ## 日本語
 
 WinPicker は、複数モニター上のウィンドウをミニマップから選び、指定したモニターへ呼び戻せる Windows 11 用タスクトレイユーティリティです。

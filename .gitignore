@@ -20,7 +20,10 @@ release/
 _Worker/
 _WorkerArchive/
 _WorkHistory/
-_docs/
+_docs/*
+!_docs/images/
+_docs/images/*
+!_docs/images/MainPanel.png
 AGENTS.md
 
 # Legacy local archives
