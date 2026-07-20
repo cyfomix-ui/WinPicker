@@ -19,9 +19,12 @@ internal sealed class ModifierChordMouseMover : IDisposable
     private readonly Action _onRightAltZ;
     private readonly Logger _logger;
     private readonly NativeMethods.LowLevelKeyboardProc _proc;
-    private readonly System.Windows.Forms.Timer _winAltChordTimer;
-    private readonly System.Windows.Forms.Timer _altTapDecisionTimer;
+    private System.Windows.Forms.Timer? _winAltChordTimer;
+    private System.Windows.Forms.Timer? _altTapDecisionTimer;
     private readonly SynchronizationContext? _syncContext;
+    private readonly Thread _hookThread;
+    private readonly ManualResetEventSlim _hookReady = new(false);
+    private uint _hookThreadId;
 
     private IntPtr _hookHandle;
     private bool _leftWinDown;
@@ -53,38 +56,59 @@ internal sealed class ModifierChordMouseMover : IDisposable
         _logger = logger;
         _syncContext = SynchronizationContext.Current;
         _proc = HookCallback;
-
-        _winAltChordTimer = new System.Windows.Forms.Timer { Interval = 140 };
-        _winAltChordTimer.Tick += OnWinAltChordTimerTick;
-
-        _altTapDecisionTimer = new System.Windows.Forms.Timer { Interval = AltTapDecisionWaitMilliseconds };
-        _altTapDecisionTimer.Tick += OnAltTapDecisionTimerTick;
-
-        Install();
+        _hookThread = new Thread(HookThreadMain)
+        {
+            IsBackground = true,
+            Name = "WinPicker low-level keyboard hook"
+        };
+        _hookThread.SetApartmentState(ApartmentState.STA);
+        _hookThread.Start();
+        _hookReady.Wait(TimeSpan.FromSeconds(3));
     }
 
-    private void Install()
+    private void HookThreadMain()
     {
         try
         {
+            _hookThreadId = NativeMethods.GetCurrentThreadId();
+            _winAltChordTimer = new System.Windows.Forms.Timer { Interval = 140 };
+            _winAltChordTimer.Tick += OnWinAltChordTimerTick;
+            _altTapDecisionTimer = new System.Windows.Forms.Timer { Interval = AltTapDecisionWaitMilliseconds };
+            _altTapDecisionTimer.Tick += OnAltTapDecisionTimerTick;
+
             _hookHandle = NativeMethods.SetWindowsHookEx(
                 NativeMethods.WH_KEYBOARD_LL,
                 _proc,
                 NativeMethods.GetModuleHandle(null),
                 0);
+            _hookReady.Set();
 
             if (_hookHandle == IntPtr.Zero)
             {
-                var win32Error = Marshal.GetLastWin32Error();
-                _logger.Warn($"Modifier chord mouse mover hook registration failed. Win32Error={win32Error}");
+                var error = Marshal.GetLastWin32Error();
+                Post(() => _logger.Warn($"Modifier chord hook registration failed. Win32Error={error}"));
                 return;
             }
 
-            _logger.Info("Modifier chord mouse mover hook registered.");
+            Post(() => _logger.Info("Modifier chord hook registered on dedicated STA thread."));
+            Application.Run();
         }
         catch (Exception ex)
         {
-            _logger.Error("Failed to register modifier chord mouse mover hook.", ex);
+            _hookReady.Set();
+            Post(() => _logger.Error("Low-level keyboard hook thread failed.", ex));
+        }
+        finally
+        {
+            _winAltChordTimer?.Stop();
+            _winAltChordTimer?.Dispose();
+            _altTapDecisionTimer?.Stop();
+            _altTapDecisionTimer?.Dispose();
+            if (_hookHandle != IntPtr.Zero)
+            {
+                NativeMethods.UnhookWindowsHookEx(_hookHandle);
+                _hookHandle = IntPtr.Zero;
+            }
         }
     }
 
@@ -107,9 +131,9 @@ internal sealed class ModifierChordMouseMover : IDisposable
                 }
             }
         }
-        catch (Exception ex)
+        catch
         {
-            _logger.Error("Modifier chord mouse mover hook callback failed.", ex);
+            // Never perform file I/O or blocking work inside the low-level hook callback.
         }
 
         return NativeMethods.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
@@ -129,9 +153,8 @@ internal sealed class ModifierChordMouseMover : IDisposable
                 if (_handledWinAltItemKeys.Add(key))
                 {
                     CancelAltTapSequence();
-                    _winAltChordTimer.Stop();
+                    _winAltChordTimer?.Stop();
                     _winAltChordHandled = true;
-                    _logger.Info($"Win+Alt item hotkey detected. key=0x{key:X} index={itemIndex}");
                     Post(() => _onWinAltItemHotkey(itemIndex));
                 }
 
@@ -209,30 +232,7 @@ internal sealed class ModifierChordMouseMover : IDisposable
 
     private static bool TryGetListIndexFromWinAltItemKey(int key, out int index)
     {
-        index = -1;
-
-        // Top-row 1-9
-        if (key >= 0x31 && key <= 0x39)
-        {
-            index = key - 0x31;
-            return true;
-        }
-
-        // Numpad 1-9
-        if (key >= 0x61 && key <= 0x69)
-        {
-            index = key - 0x61;
-            return true;
-        }
-
-        // A-Z for 10th and later entries
-        if (key >= 0x41 && key <= 0x5A)
-        {
-            index = 9 + key - 0x41;
-            return true;
-        }
-
-        return false;
+        return WindowShortcutKey.TryGetIndexFromVirtualKey(key, out index);
     }
 
     private void RegisterAltTap(bool isLeftAlt)
@@ -246,41 +246,37 @@ internal sealed class ModifierChordMouseMover : IDisposable
 
         _altTapCount++;
 
-        _logger.Info($"{(isLeftAlt ? "Left" : "Right")} Alt released. Tap count={_altTapCount}");
 
         // Restart the decision timer on every Alt release.
         // This guarantees the double-tap action does not run before the triple-tap window has expired.
-        _altTapDecisionTimer.Stop();
-        _altTapDecisionTimer.Start();
+        _altTapDecisionTimer?.Stop();
+        _altTapDecisionTimer?.Start();
     }
 
     private void OnAltTapDecisionTimerTick(object? sender, EventArgs e)
     {
-        _altTapDecisionTimer.Stop();
+        _altTapDecisionTimer?.Stop();
 
         var count = _altTapCount;
         CancelAltTapSequence();
 
         if (count >= 3)
         {
-            _logger.Info($"Alt tap decision: {count} taps. Move cursor and show picker.");
             Post(_onAltTripleTap);
             return;
         }
 
         if (count == 2)
         {
-            _logger.Info("Alt tap decision: 2 taps. Move cursor.");
             Post(_onAltDoubleTap);
             return;
         }
 
-        _logger.Info($"Alt tap decision: {count} tap. No action.");
     }
 
     private void CancelAltTapSequence()
     {
-        _altTapDecisionTimer.Stop();
+        _altTapDecisionTimer?.Stop();
         _altTapCount = 0;
     }
 
@@ -288,24 +284,24 @@ internal sealed class ModifierChordMouseMover : IDisposable
     {
         if (!winDown || !altDown)
         {
-            _winAltChordTimer.Stop();
+            _winAltChordTimer?.Stop();
             _winAltChordHandled = false;
             return;
         }
 
         if (!isModifierKey && isDown)
         {
-            _winAltChordTimer.Stop();
+            _winAltChordTimer?.Stop();
             return;
         }
 
-        if (!_winAltChordHandled && !_winAltChordTimer.Enabled)
-            _winAltChordTimer.Start();
+        if (!_winAltChordHandled && !(_winAltChordTimer?.Enabled ?? false))
+            _winAltChordTimer?.Start();
     }
 
     private void OnWinAltChordTimerTick(object? sender, EventArgs e)
     {
-        _winAltChordTimer.Stop();
+        _winAltChordTimer?.Stop();
 
         if (_winAltChordHandled)
             return;
@@ -333,25 +329,18 @@ internal sealed class ModifierChordMouseMover : IDisposable
             return;
 
         _disposed = true;
-
         try
         {
-            _winAltChordTimer.Stop();
-            _winAltChordTimer.Dispose();
-
-            _altTapDecisionTimer.Stop();
-            _altTapDecisionTimer.Dispose();
-
-            if (_hookHandle != IntPtr.Zero)
-            {
-                NativeMethods.UnhookWindowsHookEx(_hookHandle);
-                _hookHandle = IntPtr.Zero;
-                _logger.Info("Modifier chord mouse mover hook unregistered.");
-            }
+            if (_hookThreadId != 0)
+                NativeMethods.PostThreadMessage(_hookThreadId, NativeMethods.WM_QUIT, IntPtr.Zero, IntPtr.Zero);
+            if (_hookThread.IsAlive)
+                _hookThread.Join(TimeSpan.FromSeconds(3));
+            _hookReady.Dispose();
+            _logger.Info("Modifier chord hook thread stopped.");
         }
         catch (Exception ex)
         {
-            _logger.Error("Failed to unregister modifier chord mouse mover hook.", ex);
+            _logger.Error("Failed to stop modifier chord hook thread.", ex);
         }
     }
 }

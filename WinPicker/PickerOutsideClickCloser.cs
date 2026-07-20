@@ -9,8 +9,11 @@ internal sealed class PickerOutsideClickCloser : IDisposable
     private readonly Logger _logger;
     private readonly NativeMethods.LowLevelMouseProc _proc;
     private readonly SynchronizationContext? _syncContext;
+    private readonly Thread _hookThread;
+    private readonly ManualResetEventSlim _ready = new(false);
 
     private IntPtr _hookHandle;
+    private uint _hookThreadId;
     private bool _closing;
     private bool _disposed;
 
@@ -21,32 +24,49 @@ internal sealed class PickerOutsideClickCloser : IDisposable
         _logger = logger;
         _syncContext = SynchronizationContext.Current;
         _proc = HookCallback;
-
-        Install();
+        _hookThread = new Thread(HookThreadMain)
+        {
+            IsBackground = true,
+            Name = "WinPicker outside-click hook"
+        };
+        _hookThread.SetApartmentState(ApartmentState.STA);
+        _hookThread.Start();
     }
 
-    private void Install()
+    private void HookThreadMain()
     {
         try
         {
+            _hookThreadId = NativeMethods.GetCurrentThreadId();
             _hookHandle = NativeMethods.SetWindowsHookExMouse(
                 NativeMethods.WH_MOUSE_LL,
                 _proc,
                 NativeMethods.GetModuleHandle(null),
                 0);
+            _ready.Set();
 
             if (_hookHandle == IntPtr.Zero)
             {
-                var win32Error = Marshal.GetLastWin32Error();
-                _logger.Warn($"Picker outside-click hook registration failed. Win32Error={win32Error}");
+                var error = Marshal.GetLastWin32Error();
+                Post(() => _logger.Warn($"Picker outside-click hook registration failed. Win32Error={error}"));
                 return;
             }
 
-            _logger.Info("Picker outside-click hook registered.");
+            Post(() => _logger.Info("Picker outside-click hook registered on dedicated STA thread."));
+            Application.Run();
         }
         catch (Exception ex)
         {
-            _logger.Error("Failed to register picker outside-click hook.", ex);
+            _ready.Set();
+            Post(() => _logger.Error("Picker outside-click hook thread failed.", ex));
+        }
+        finally
+        {
+            if (_hookHandle != IntPtr.Zero)
+            {
+                NativeMethods.UnhookWindowsHookEx(_hookHandle);
+                _hookHandle = IntPtr.Zero;
+            }
         }
     }
 
@@ -57,15 +77,9 @@ internal sealed class PickerOutsideClickCloser : IDisposable
             if (nCode >= 0 && !_closing && IsMouseDownMessage(wParam.ToInt32()))
             {
                 var cursor = Cursor.Position;
-
-                if (!_form.IsDisposed &&
-                    _form.Visible &&
-                    !_shouldIgnore() &&
-                    !_form.Bounds.Contains(cursor))
+                if (!_form.IsDisposed && _form.Visible && !_shouldIgnore() && !_form.Bounds.Contains(cursor))
                 {
                     _closing = true;
-                    _logger.Info($"Picker outside click detected at {cursor}. Closing picker.");
-
                     Post(() =>
                     {
                         try
@@ -81,9 +95,9 @@ internal sealed class PickerOutsideClickCloser : IDisposable
                 }
             }
         }
-        catch (Exception ex)
+        catch
         {
-            _logger.Error("Picker outside-click hook callback failed.", ex);
+            // Keep the low-level callback non-blocking and free of file I/O.
         }
 
         return NativeMethods.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
@@ -109,21 +123,23 @@ internal sealed class PickerOutsideClickCloser : IDisposable
     {
         if (_disposed)
             return;
-
         _disposed = true;
 
         try
         {
-            if (_hookHandle != IntPtr.Zero)
+            if (_hookThreadId != 0)
+                NativeMethods.PostThreadMessage(_hookThreadId, NativeMethods.WM_QUIT, IntPtr.Zero, IntPtr.Zero);
+            _ = Task.Run(() =>
             {
-                NativeMethods.UnhookWindowsHookEx(_hookHandle);
-                _hookHandle = IntPtr.Zero;
-                _logger.Info("Picker outside-click hook unregistered.");
-            }
+                if (_hookThread.IsAlive)
+                    _hookThread.Join(TimeSpan.FromSeconds(2));
+                _ready.Dispose();
+            });
+            _logger.Info("Picker outside-click hook stop requested.");
         }
         catch (Exception ex)
         {
-            _logger.Error("Failed to unregister picker outside-click hook.", ex);
+            _logger.Error("Failed to stop picker outside-click hook thread.", ex);
         }
     }
 }

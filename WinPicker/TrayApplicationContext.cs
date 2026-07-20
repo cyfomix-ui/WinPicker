@@ -337,6 +337,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             {
                 RegisterHotKeys();
                 _monitorScreenSaverManager.ApplySettings();
+                if (_mapForm is { IsDisposed: false })
+                    _mapForm.ApplySettings();
                 _notifyIcon.ShowBalloonTip(1600, UiText.AppTitleWithVersion, UiText.SettingsSaved, ToolTipIcon.Info);
             }
         }

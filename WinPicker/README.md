@@ -1,4 +1,4 @@
-﻿# WinPicker v0.68
+﻿# WinPicker v0.71
 
 ## v0.61
 
@@ -45,12 +45,6 @@ It shows a dark mini map of all monitors and visible windows. When the right-sid
 - Added per-monitor Tapo power control enable/disable and device IP settings to the monitor context menu.
 - Sends `state=off` after the configured delay and `state=on` when mouse activity dismisses the saver on that monitor.
 - HTTP requests are asynchronous, time out after five seconds, avoid duplicate requests, and log failures without stopping WinPicker.
-
-## TapoCtrl integration
-
-WinPicker sends monitor power commands through the `/api/power` endpoint provided by [TapoCtrl](https://github.com/cyfomix-ui/TapoCtrl). Configure a Tapo device IP for each monitor, then WinPicker can send `state=off` after the screen-saver delay and `state=on` when the saver is dismissed. The same endpoint is used by the monitor context menu's manual On/Off commands.
-
-TapoCtrl defaults to `http://127.0.0.1:8080/api/power`, while WinPicker's bundled `appsettings.json` currently defaults to `http://127.0.0.1:8900/api/power`. Change either WinPicker's `Tapo control URL` or TapoCtrl's web-server port so they match. When TapoCtrl runs on another PC, use that PC's LAN address and configure its bind setting and firewall. Do not expose the unauthenticated API directly to an untrusted network.
 
 
 ## Requirements
@@ -621,3 +615,33 @@ WinPicker\bin\Release\net8.0-windows\win-x64\publish\WinPicker.exe
 ## v0.68
 - UI language detection now follows the active Windows UI culture only. Non-Japanese OS/UI modes use English even when Japanese language resources are installed.
 - Localized remaining hard-coded monitor saver, Tapo IP validation, power countdown, and saver-dismiss status strings.
+
+## v0.69
+
+- Stopped the monitor-map saver timer when per-monitor screen saver support is disabled.
+- Replaced unconditional one-second full-form invalidation with saver-state comparison and region-only invalidation.
+- Removed focus/foreground recovery from normal mouse hover; Deactivate-based recovery remains for `KeepPickerFocused`.
+- Moved media-window enumeration to a single non-overlapping background task and applies results on the UI context.
+- Added a lightweight media-only window enumeration path that skips elevation/token inspection and monitor-index calculation.
+- Added cancellation/disposal guards for background media detection.
+
+
+## v0.71
+
+- Moved low-level keyboard and map outside-click hooks to dedicated background STA threads with their own WinForms message loops.
+- Added orange, click-through shortcut badges (`1`-`9`, `a`-`z`) to the top-right of real desktop windows while the monitor map is open.
+- Added one-worker live thumbnail scheduling with cancellation, generation checks, priority ordering, duplicate suppression, failure backoff, and UI-thread-only bitmap swaps.
+- Removed synchronous `PrintWindow`, `CopyFromScreen`, image resizing, and full window enumeration from `MonitorMapForm.OnPaint` and the main UI thread.
+- Live capture uses `PrintWindow(PW_RENDERFULLCONTENT)` only; failed captures preserve the previous valid image.
+- Reduced screen-saver animation timer frequency, made movement elapsed-time based, stopped the Black-mode timer, removed per-bubble `GraphicsPath` creation, and avoided RandomText repainting during its static period.
+- Added `Measure-WinPickerCpu.ps1` for repeatable `Process.TotalProcessorTime` measurements.
+
+### v0.71 thread layout
+
+- Main WinForms UI thread: paints cached thumbnails, handles map UI, and swaps completed bitmaps.
+- Keyboard hook STA thread: owns `WH_KEYBOARD_LL` and its message loop.
+- Map mouse-hook STA thread: exists only while the map is open and owns `WH_MOUSE_LL`.
+- Live thumbnail worker: one cancellable Task per map session; it captures one target at a time with backpressure.
+- Shortcut-overlay STA thread: one thread owns every orange badge and checks target positions every 350 ms.
+
+Bitmap ownership: the capture worker owns a newly captured bitmap until it posts the result. The map UI thread then owns it, swaps it into `WindowThumbnailCache`, and disposes the prior bitmap. Workers never dispose a bitmap being painted.

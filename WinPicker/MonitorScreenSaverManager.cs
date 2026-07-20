@@ -21,10 +21,14 @@ public sealed class MonitorScreenSaverManager : IDisposable
     private readonly Dictionary<string, DateTime> _lastPowerAttemptUtc = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _desiredPowerState = new(StringComparer.OrdinalIgnoreCase);
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(5) };
+    private readonly SynchronizationContext _uiContext;
+    private readonly CancellationTokenSource _mediaCheckCancellation = new();
+    private Task<HashSet<string>>? _mediaCheckTask;
 
     private Point _lastCursor = Point.Empty;
     private string? _lastCursorScreenKey;
     private DateTime _lastMediaCheckUtc = DateTime.MinValue;
+    private int _mediaCheckGeneration;
     private bool _disposed;
 
     public MonitorScreenSaverManager(AppSettings settings, Logger logger, Func<bool> isPaused)
@@ -33,6 +37,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
         _logger = logger;
         _isPaused = isPaused;
         _windowEnumerator = new WindowEnumerator(settings, logger);
+        _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
 
         _lastCursor = Cursor.Position;
         ResetAllActivity();
@@ -138,6 +143,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
             return;
 
         _timer.Stop();
+        _mediaCheckGeneration++;
         CloseAll();
         _mediaSuppressedScreens.Clear();
         _logger.Info("Monitor screen saver timer stopped.");
@@ -181,7 +187,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
 
             var mediaCheckNeeded = IsMediaCheckNeeded(screens, cursorKey, now);
             if (mediaCheckNeeded)
-                UpdateMediaSuppressionIfNeeded(screens, now);
+                StartMediaSuppressionUpdate(screens, now);
             else if (!_settings.SuppressMonitorScreenSaverWhenMediaVisible && _mediaSuppressedScreens.Count > 0)
                 _mediaSuppressedScreens.Clear();
 
@@ -281,6 +287,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
     {
         try
         {
+            _mediaCheckGeneration++;
             CloseAll();
             ResetAllActivity();
             _mediaSuppressedScreens.Clear();
@@ -326,8 +333,15 @@ public sealed class MonitorScreenSaverManager : IDisposable
         return "Black";
     }
 
-    private void UpdateMediaSuppressionIfNeeded(Screen[] screens, DateTime now)
+    private void StartMediaSuppressionUpdate(Screen[] screens, DateTime now)
     {
+        if (_disposed || _mediaCheckCancellation.IsCancellationRequested)
+            return;
+
+        // Do not overlap expensive EnumWindows/DWM/process inspection runs.
+        if (_mediaCheckTask is { IsCompleted: false })
+            return;
+
         _lastMediaCheckUtc = now;
 
         if (!_settings.SuppressMonitorScreenSaverWhenMediaVisible)
@@ -337,30 +351,64 @@ public sealed class MonitorScreenSaverManager : IDisposable
             return;
         }
 
-        _mediaSuppressedScreens.Clear();
+        var screenSnapshots = screens
+            .Select(screen => new MediaScreenSnapshot(GetScreenKey(screen), screen.Bounds))
+            .ToArray();
+        var token = _mediaCheckCancellation.Token;
+        var generation = _mediaCheckGeneration;
 
-        try
+        _mediaCheckTask = Task.Run(() => DetectMediaSuppressedScreens(screenSnapshots, token), token);
+        _ = _mediaCheckTask.ContinueWith(task =>
         {
-            foreach (var window in _windowEnumerator.Enumerate())
+            if (task.IsCanceled || token.IsCancellationRequested || _disposed)
+                return;
+
+            if (task.IsFaulted)
             {
-                if (window.IsMinimized || !IsLikelyMediaWindow(window))
-                    continue;
+                var ex = task.Exception?.GetBaseException();
+                _logger.Warn($"Media window detection failed: {ex?.Message ?? "unknown error"}");
+                return;
+            }
 
-                foreach (var screen in screens)
-                {
-                    if (!WindowTouchesScreenEnough(window.Bounds, screen.Bounds))
-                        continue;
+            var detected = task.Result;
+            _uiContext.Post(_ => ApplyMediaSuppressionResult(detected, generation), null);
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
 
-                    var key = GetScreenKey(screen);
-                    _mediaSuppressedScreens.Add(key);
-                }
+    private HashSet<string> DetectMediaSuppressedScreens(MediaScreenSnapshot[] screens, CancellationToken token)
+    {
+        var detected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var window in _windowEnumerator.EnumerateForMediaDetection(token))
+        {
+            token.ThrowIfCancellationRequested();
+
+            if (window.IsMinimized || !IsLikelyMediaWindow(window))
+                continue;
+
+            foreach (var screen in screens)
+            {
+                if (WindowTouchesScreenEnough(window.Bounds, screen.Bounds))
+                    detected.Add(screen.Key);
             }
         }
-        catch (Exception ex)
-        {
-            _logger.Warn($"Media window detection failed: {ex.Message}");
-        }
+
+        return detected;
     }
+
+    private void ApplyMediaSuppressionResult(HashSet<string> detected, int generation)
+    {
+        if (_disposed || _mediaCheckCancellation.IsCancellationRequested || generation != _mediaCheckGeneration ||
+            !_settings.EnableMonitorScreenSaver || !_settings.SuppressMonitorScreenSaverWhenMediaVisible)
+            return;
+
+        // Collection mutation stays on the WinForms/UI context.
+        _mediaSuppressedScreens.Clear();
+        foreach (var key in detected)
+            _mediaSuppressedScreens.Add(key);
+    }
+
+    private sealed record MediaScreenSnapshot(string Key, Rectangle Bounds);
 
     private static bool WindowTouchesScreenEnough(Rectangle window, Rectangle screen)
     {
@@ -766,6 +814,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
             return;
 
         _disposed = true;
+        _mediaCheckCancellation.Cancel();
         _timer.Stop();
         _timer.Dispose();
         foreach (var form in _active.Values.ToList())
@@ -795,6 +844,7 @@ public sealed class MonitorScreenSaverManager : IDisposable
         }
         _countdowns.Clear();
         _saverStartedUtc.Clear();
+        _mediaCheckCancellation.Dispose();
         _httpClient.Dispose();
 
         _logger.Info("Monitor screen saver manager stopped.");

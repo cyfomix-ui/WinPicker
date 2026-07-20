@@ -53,6 +53,100 @@ public sealed class WindowEnumerator
         return result;
     }
 
+    /// <summary>
+    /// Lightweight top-level window enumeration used only by media suppression.
+    /// It intentionally skips elevation/token checks and monitor-index calculation.
+    /// </summary>
+    public List<WindowInfo> EnumerateForMediaDetection(CancellationToken cancellationToken)
+    {
+        var result = new List<WindowInfo>();
+        var currentProcessId = Environment.ProcessId;
+        var zOrderIndex = 0;
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            NativeMethods.EnumWindows((hWnd, _) =>
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    return false;
+
+                try
+                {
+                    var info = TryCreateMediaWindowInfo(hWnd, currentProcessId, zOrderIndex);
+                    zOrderIndex++;
+
+                    if (info is not null)
+                        result.Add(info);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug($"Failed to inspect media window hwnd=0x{hWnd.ToInt64():X}: {ex.Message}");
+                }
+
+                return true;
+            }, IntPtr.Zero);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"Media EnumWindows failed: {ex.Message}");
+        }
+
+        return result;
+    }
+
+    private WindowInfo? TryCreateMediaWindowInfo(IntPtr hWnd, int currentProcessId, int zOrderIndex)
+    {
+        if (hWnd == IntPtr.Zero || !NativeMethods.IsWindowVisible(hWnd) || IsCloaked(hWnd))
+            return null;
+
+        var className = GetClassName(hWnd);
+        if (IsExcludedWindowClass(className))
+            return null;
+
+        var title = GetTitle(hWnd).Trim();
+        if (string.IsNullOrWhiteSpace(title))
+            return null;
+
+        NativeMethods.GetWindowThreadProcessId(hWnd, out var processIdValue);
+        var processId = (int)processIdValue;
+        if (processId == currentProcessId)
+            return null;
+
+        var processName = GetProcessName(processId);
+        if (IsExcluded(processName, title))
+            return null;
+
+        var isMinimized = NativeMethods.IsIconic(hWnd);
+        var bounds = isMinimized ? GetNormalBounds(hWnd) : GetRealBounds(hWnd);
+        if (bounds.Width < 80 || bounds.Height < 60)
+            bounds = GetRealBounds(hWnd);
+        if (bounds.Width < 80 || bounds.Height < 60)
+            return null;
+
+        var exStyle = NativeMethods.GetWindowLong(hWnd, NativeMethods.GWL_EXSTYLE);
+        if ((exStyle & NativeMethods.WS_EX_TOOLWINDOW) == NativeMethods.WS_EX_TOOLWINDOW)
+            return null;
+
+        return new WindowInfo
+        {
+            Handle = hWnd,
+            Title = title,
+            ProcessName = processName,
+            ClassName = className,
+            Bounds = bounds,
+            IsMinimized = isMinimized,
+            IsMaximized = false,
+            IsElevated = false,
+            MonitorIndex = -1,
+            ZOrderIndex = zOrderIndex
+        };
+    }
+
     private WindowInfo? TryCreateWindowInfo(IntPtr hWnd, int currentProcessId, Screen[] screens, int zOrderIndex)
     {
         if (hWnd == IntPtr.Zero)

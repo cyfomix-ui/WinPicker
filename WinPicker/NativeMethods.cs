@@ -27,6 +27,7 @@ internal static class NativeMethods
     public const uint MOD_NOREPEAT = 0x4000;
 
     public const int WM_HOTKEY = 0x0312;
+    public const int WM_QUIT = 0x0012;
     public const int WM_LBUTTONDOWN = 0x0201;
     public const int WM_LBUTTONUP = 0x0202;
     public const int WM_RBUTTONDOWN = 0x0204;
@@ -101,6 +102,10 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindow(IntPtr hWnd);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
@@ -185,6 +190,13 @@ internal static class NativeMethods
 
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     public static extern IntPtr GetModuleHandle(string? lpModuleName);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostThreadMessage(uint idThread, int msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

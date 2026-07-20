@@ -21,6 +21,13 @@ public sealed class MonitorMapForm : Form
     private readonly WindowMinimizeHistory _minimizeHistory;
     private readonly MonitorScreenSaverManager _monitorScreenSaverManager;
     private readonly WindowThumbnailCache _thumbnailCache;
+    private LiveThumbnailScheduler? _thumbnailScheduler;
+    private WindowShortcutOverlayManager? _shortcutOverlayManager;
+    private SynchronizationContext _uiContext;
+    private int _mapSessionGeneration;
+    private bool _mapSessionClosing;
+    private int _windowEnumerationGeneration;
+    private int _windowEnumerationInFlight;
     private readonly GeometrySnapshotService _geometrySnapshots;
     private readonly Action? _openSettingsAction;
     private readonly ToolTip _iconToolTip = new();
@@ -30,6 +37,7 @@ public sealed class MonitorMapForm : Form
     private readonly List<MappedWindow> _mappedWindows = new();
     private readonly List<MappedMonitor> _mappedMonitors = new();
     private readonly List<MappedListItem> _mappedListItems = new();
+    private readonly Dictionary<string, SaverVisualState> _lastSaverVisualStates = new(StringComparer.OrdinalIgnoreCase);
 
     private List<WindowInfo> _windows = new();
     private Rectangle _virtualBounds = Rectangle.Empty;
@@ -47,7 +55,6 @@ public sealed class MonitorMapForm : Form
     private bool _contextMenuOpen;
     private bool _modalDialogOpen;
     private bool _firstPaintCompleted;
-    private DateTime _lastBringToFrontFromHoverUtc = DateTime.MinValue;
     private string _currentIconToolTipText = string.Empty;
 
     public MonitorMapForm(AppSettings settings, Logger logger, WindowMoveHistory history, WindowMinimizeHistory minimizeHistory, MonitorScreenSaverManager monitorScreenSaverManager, Action? openSettingsAction = null)
@@ -55,6 +62,7 @@ public sealed class MonitorMapForm : Form
         logger.Entry("Create monitor map form");
         _settings = settings;
         _logger = logger;
+        _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         _history = history;
         _minimizeHistory = minimizeHistory;
         _monitorScreenSaverManager = monitorScreenSaverManager;
@@ -122,7 +130,6 @@ public sealed class MonitorMapForm : Form
                     BringPickerToFront();
             }));
         };
-        Load += (_, _) => RefreshWindows();
         MouseClick += OnMouseClick;
         MouseMove += OnMouseMove;
         MouseDoubleClick += OnMouseDoubleClick;
@@ -130,15 +137,153 @@ public sealed class MonitorMapForm : Form
         MouseLeave += (_, _) => ClearHover();
         KeyDown += OnKeyDown;
 
-        // Refresh only the visual saver-state veil while the monitor map is open.
-        // This timer does not affect mouse/keyboard hit testing or saver control.
+        // Refresh saver visuals only when their displayed state actually changes.
+        // The timer remains stopped while the monitor screen saver feature is disabled.
         _saverStateRefreshTimer.Interval = 1000;
-        _saverStateRefreshTimer.Tick += (_, _) =>
+        _saverStateRefreshTimer.Tick += (_, _) => RefreshSaverVisualStateSafely();
+        UpdateSaverStateRefreshTimer();
+    }
+
+    public void ApplySettings()
+    {
+        if (IsDisposed)
+            return;
+
+        _lastSaverVisualStates.Clear();
+        UpdateSaverStateRefreshTimer();
+        if (_settings.EnableMonitorScreenSaver)
+            RefreshSaverVisualStateSafely(forceInvalidate: true);
+        else
+            Invalidate();
+
+        if (Visible)
         {
-            if (!IsDisposed && Visible)
-                Invalidate();
-        };
-        _saverStateRefreshTimer.Start();
+            _mapSessionClosing = false;
+            StartMapSession();
+        }
+    }
+
+    private void UpdateSaverStateRefreshTimer()
+    {
+        if (IsDisposed)
+            return;
+
+        if (_settings.EnableMonitorScreenSaver)
+        {
+            if (!_saverStateRefreshTimer.Enabled)
+                _saverStateRefreshTimer.Start();
+        }
+        else
+        {
+            if (_saverStateRefreshTimer.Enabled)
+                _saverStateRefreshTimer.Stop();
+            _lastSaverVisualStates.Clear();
+        }
+    }
+
+    private void RefreshSaverVisualStateSafely(bool forceInvalidate = false)
+    {
+        try
+        {
+            if (IsDisposed || !Visible)
+                return;
+
+            if (!_settings.EnableMonitorScreenSaver)
+            {
+                UpdateSaverStateRefreshTimer();
+                return;
+            }
+
+            var current = CaptureSaverVisualStates();
+            foreach (var pair in current)
+            {
+                var hasPrevious = _lastSaverVisualStates.TryGetValue(pair.Key, out var previous);
+                if (!forceInvalidate && hasPrevious && previous == pair.Value)
+                    continue;
+
+                var overlayChanged = forceInvalidate || !hasPrevious || previous!.SaverActive != pair.Value.SaverActive;
+                InvalidateSaverVisualRegion(pair.Key, overlayChanged);
+            }
+
+            foreach (var removedKey in _lastSaverVisualStates.Keys.Except(current.Keys, StringComparer.OrdinalIgnoreCase).ToArray())
+                InvalidateSaverVisualRegion(removedKey, includeMonitorBody: true);
+
+            _lastSaverVisualStates.Clear();
+            foreach (var pair in current)
+                _lastSaverVisualStates[pair.Key] = pair.Value;
+        }
+        catch (Exception ex)
+        {
+            // A visual refresh failure must never terminate the tray application.
+            _logger.Warn($"Saver visual refresh failed: {ex.Message}");
+        }
+    }
+
+    private Dictionary<string, SaverVisualState> CaptureSaverVisualStates()
+    {
+        var result = new Dictionary<string, SaverVisualState>(StringComparer.OrdinalIgnoreCase);
+        foreach (var screen in Screen.AllScreens)
+        {
+            var status = _monitorScreenSaverManager.GetDisplayStatus(screen);
+            var key = MonitorScreenSaverManager.GetScreenKey(screen);
+            result[key] = new SaverVisualState(
+                status.SaverConfigured,
+                status.SaverActive,
+                ToDisplaySeconds(status.SaverActiveDuration),
+                ToDisplaySeconds(status.UntilSaver),
+                status.PowerControlConfigured,
+                status.MonitorPowerOff,
+                ToDisplaySeconds(status.MonitorOffDelay));
+        }
+        return result;
+    }
+
+    private void InvalidateSaverVisualRegion(string screenKey, bool includeMonitorBody)
+    {
+        var monitor = _mappedMonitors.FirstOrDefault(m =>
+            string.Equals(MonitorScreenSaverManager.GetScreenKey(m.Screen), screenKey, StringComparison.OrdinalIgnoreCase));
+
+        if (monitor is null)
+        {
+            Invalidate();
+            return;
+        }
+
+        if (includeMonitorBody)
+        {
+            // Saver activation changes the hatch overlay, so repaint the monitor and label bands.
+            var fullRect = Rectangle.Inflate(monitor.MapBounds, 3, MonitorLabelBand + 8);
+            fullRect.Intersect(ClientRectangle);
+            if (!fullRect.IsEmpty)
+                Invalidate(fullRect);
+            return;
+        }
+
+        // Countdown text changes once per second; repaint only the outside label bands.
+        var topLabel = new Rectangle(
+            monitor.MapBounds.Left - 3,
+            monitor.MapBounds.Top - MonitorLabelBand - 8,
+            monitor.MapBounds.Width + 6,
+            MonitorLabelBand + 8);
+        var bottomLabel = new Rectangle(
+            monitor.MapBounds.Left - 3,
+            monitor.MapBounds.Bottom,
+            monitor.MapBounds.Width + 6,
+            MonitorLabelBand + 8);
+
+        topLabel.Intersect(ClientRectangle);
+        bottomLabel.Intersect(ClientRectangle);
+        if (!topLabel.IsEmpty)
+            Invalidate(topLabel);
+        if (!bottomLabel.IsEmpty)
+            Invalidate(bottomLabel);
+    }
+
+    private static long? ToDisplaySeconds(TimeSpan? value)
+    {
+        if (!value.HasValue)
+            return null;
+        return Math.Max(0L, (long)Math.Floor(value.Value.TotalSeconds));
     }
 
     public void ShowAt(Point anchor)
@@ -197,26 +342,64 @@ public sealed class MonitorMapForm : Form
 
     private void RefreshWindows()
     {
-        try
+        if (_mapSessionClosing || IsDisposed)
+            return;
+
+        // Window enumeration can touch DWM and process APIs. Keep that work off the WinForms UI thread.
+        if (Interlocked.CompareExchange(ref _windowEnumerationInFlight, 1, 0) != 0)
+            return;
+
+        var generation = Interlocked.Increment(ref _windowEnumerationGeneration);
+        _ = Task.Run(() => _enumerator.Enumerate()).ContinueWith(task =>
         {
-            ClearHover();
-            _thumbnailCache.Clear();
-            _windows = _enumerator.Enumerate();
-            _selectedIndex = _windows.Count > 0 ? 0 : -1;
-            _logger.Info($"Enumerated windows: {_windows.Count}");
-            Invalidate();
-        }
-        catch (Exception ex)
+            Interlocked.Exchange(ref _windowEnumerationInFlight, 0);
+            if (task.IsFaulted)
+            {
+                var error = task.Exception?.GetBaseException();
+                _uiContext.Post(_ =>
+                {
+                    if (!IsDisposed && error is not null)
+                        _logger.Error("Failed to refresh window map.", error);
+                }, null);
+                return;
+            }
+
+            var windows = task.Result;
+            _uiContext.Post(_ => ApplyEnumeratedWindows(generation, windows), null);
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    private void ApplyEnumeratedWindows(int generation, List<WindowInfo> windows)
+    {
+        if (_mapSessionClosing || IsDisposed)
+            return;
+        if (generation != _windowEnumerationGeneration)
         {
-            _logger.Error("Failed to refresh window map.", ex);
+            RefreshWindows();
+            return;
         }
+
+        ClearHover();
+        _windows = windows;
+        _thumbnailCache.Prune(_windows.Select(window => window.Handle));
+        _selectedIndex = _windows.Count > 0 ? Math.Clamp(_selectedIndex, 0, _windows.Count - 1) : -1;
+        _logger.Info($"Enumerated windows: {_windows.Count}");
+        UpdateMapSessionTargets();
+        Invalidate();
     }
 
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        _uiContext = SynchronizationContext.Current ?? _uiContext;
         TryEnableDarkTitleBar();
+        UpdateSaverStateRefreshTimer();
+        _lastSaverVisualStates.Clear();
+        foreach (var pair in CaptureSaverVisualStates())
+            _lastSaverVisualStates[pair.Key] = pair.Value;
         BringPickerToFront();
+        StartMapSession();
+        RefreshWindows();
 
         // Keep the initial WinForms white/default paint hidden until our first dark paint completes.
         BeginInvoke(new Action(() =>
@@ -255,8 +438,16 @@ public sealed class MonitorMapForm : Form
         }
     }
 
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        // Remove desktop badges and stop new captures before the map window starts disappearing.
+        StopMapSession();
+        base.OnFormClosing(e);
+    }
+
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        StopMapSession();
         ClearHover();
         _highlighter.Dispose();
         _thumbnailCache.Dispose();
@@ -667,7 +858,7 @@ public sealed class MonitorMapForm : Form
         using var fallbackBrush = new SolidBrush(hovered ? Color.FromArgb(255, 210, 90) : selected ? Color.FromArgb(92, 76, 38) : Color.FromArgb(55, 82, 118));
         g.FillRectangle(fallbackBrush, rect);
 
-        var thumb = _thumbnailCache.GetThumbnail(window);
+        var thumb = _thumbnailCache.TryGet(window.Handle);
         if (thumb is null)
             return;
 
@@ -1262,17 +1453,11 @@ public sealed class MonitorMapForm : Form
         if (selectionChanged)
             EnsureListSelectionVisible();
 
+        if (selectionChanged || hoverChanged)
+            UpdateMapSessionTargets();
+
         Invalidate();
 
-        if (_settings.KeepPickerFocused && hoverChanged)
-        {
-            var now = DateTime.UtcNow;
-            if (now - _lastBringToFrontFromHoverUtc > TimeSpan.FromMilliseconds(350))
-            {
-                _lastBringToFrontFromHoverUtc = now;
-                BeginInvoke(new Action(BringPickerToFront));
-            }
-        }
     }
 
     private void ShowContextMenuIfNeeded(Point location)
@@ -1890,40 +2075,94 @@ public sealed class MonitorMapForm : Form
 
     private static bool TryGetListIndexFromHotkey(Keys keyCode, out int index)
     {
-        index = -1;
-
-        var keyValue = (int)keyCode;
-        if (keyValue >= (int)Keys.D1 && keyValue <= (int)Keys.D9)
-        {
-            index = keyValue - (int)Keys.D1;
-            return true;
-        }
-
-        if (keyValue >= (int)Keys.NumPad1 && keyValue <= (int)Keys.NumPad9)
-        {
-            index = keyValue - (int)Keys.NumPad1;
-            return true;
-        }
-
-        if (keyValue >= (int)Keys.A && keyValue <= (int)Keys.Z)
-        {
-            index = 9 + keyValue - (int)Keys.A;
-            return true;
-        }
-
-        return false;
+        return WindowShortcutKey.TryGetIndex(keyCode, out index);
     }
 
     private static string GetListItemKeyLabel(int index)
     {
-        if (index >= 0 && index <= 8)
-            return (index + 1).ToString();
+        return WindowShortcutKey.GetLabel(index) ?? "?";
+    }
 
-        var letterIndex = index - 9;
-        if (letterIndex >= 0 && letterIndex < 26)
-            return ((char)('a' + letterIndex)).ToString();
+    private void StartMapSession()
+    {
+        if (_mapSessionClosing || IsDisposed)
+            return;
 
-        return "?";
+        StopMapSession();
+        _mapSessionClosing = false;
+        _mapSessionGeneration++;
+        var generation = _mapSessionGeneration;
+
+        _shortcutOverlayManager = new WindowShortcutOverlayManager();
+        if (_settings.ShowWindowThumbnails)
+        {
+            _thumbnailScheduler = new LiveThumbnailScheduler(
+                generation,
+                _logger,
+                _uiContext,
+                OnThumbnailCaptured);
+        }
+
+        UpdateMapSessionTargets();
+    }
+
+    private void StopMapSession()
+    {
+        _mapSessionClosing = true;
+        _mapSessionGeneration++;
+        Interlocked.Increment(ref _windowEnumerationGeneration);
+
+        var scheduler = _thumbnailScheduler;
+        _thumbnailScheduler = null;
+        scheduler?.Dispose();
+
+        var overlays = _shortcutOverlayManager;
+        _shortcutOverlayManager = null;
+        if (overlays is not null)
+        {
+            overlays.Clear();
+            overlays.Dispose();
+        }
+    }
+
+    private void UpdateMapSessionTargets()
+    {
+        if (_mapSessionClosing || IsDisposed)
+            return;
+
+        _shortcutOverlayManager?.Update(
+            _windows.Take(WindowShortcutKey.MaximumAssignedWindows)
+                .Select((window, index) => new WindowShortcutOverlayTarget(window.Handle, WindowShortcutKey.GetChordLabel(index)!)));
+
+        if (_thumbnailScheduler is null)
+            return;
+
+        var targets = new List<WindowSnapshot>();
+        for (var index = 0; index < _windows.Count; index++)
+        {
+            var window = _windows[index];
+            if (window.Handle == IntPtr.Zero || window.IsMinimized || !NativeMethods.IsWindowVisible(window.Handle))
+                continue;
+
+            NativeMethods.GetWindowThreadProcessId(window.Handle, out var processId);
+            var priority = index == _selectedIndex ? 100000 : window.Handle == _hoveredHandle ? 90000 : Math.Min(50000, window.Bounds.Width * window.Bounds.Height / 100);
+            targets.Add(new WindowSnapshot(window.Handle, processId, window.Bounds, window.IsMinimized, new Size(420, 260), priority));
+        }
+        _thumbnailScheduler.UpdateTargets(targets);
+    }
+
+    private void OnThumbnailCaptured(int generation, IntPtr handle, Bitmap bitmap)
+    {
+        if (_mapSessionClosing || IsDisposed || generation != _mapSessionGeneration)
+        {
+            bitmap.Dispose();
+            return;
+        }
+
+        _thumbnailCache.Swap(handle, bitmap);
+        var mapped = _mappedWindows.LastOrDefault(item => item.Window.Handle == handle);
+        if (mapped is not null)
+            Invalidate(Rectangle.Inflate(mapped.MapBounds, 3, 3));
     }
 
     private void MovePickerWindow(Keys keyCode, bool fast)
@@ -2055,6 +2294,7 @@ public sealed class MonitorMapForm : Form
         _statusMessage = Shorten(selected.Title, 72);
         _highlighter.Highlight(selected);
         EnsureListSelectionVisible();
+        UpdateMapSessionTargets();
         Invalidate();
         BeginInvoke(new Action(BringPickerToFront));
     }
@@ -2087,6 +2327,15 @@ public sealed class MonitorMapForm : Form
 
         return value[..Math.Max(1, maxLength - 1)] + "…";
     }
+
+    private sealed record SaverVisualState(
+        bool SaverConfigured,
+        bool SaverActive,
+        long? SaverActiveSeconds,
+        long? UntilSaverSeconds,
+        bool PowerControlConfigured,
+        bool MonitorPowerOff,
+        long? MonitorOffDelaySeconds);
 
     private sealed record MappedWindow(WindowInfo Window, Rectangle MapBounds);
     private sealed record MappedMonitor(int Index, Screen Screen, Rectangle MapBounds);

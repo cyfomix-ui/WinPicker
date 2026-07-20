@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
 
 namespace WinPicker;
@@ -22,6 +23,8 @@ public sealed class ScreenSaverOverlayForm : Form
     private DateTime _randomTextCreatedAtUtc = DateTime.UtcNow;
 
     private int _tick;
+    private readonly Stopwatch _animationClock = Stopwatch.StartNew();
+    private long _lastAnimationMilliseconds;
 
     public ScreenSaverOverlayForm(Screen screen, string kind)
     {
@@ -39,15 +42,15 @@ public sealed class ScreenSaverOverlayForm : Form
         _timer = new System.Windows.Forms.Timer();
         _timer.Interval = _kind switch
         {
-            "Lines" => 180,
-            "Bubbles" => 90,
+            "Lines" => 280,
+            "Bubbles" => 180,
             "RandomText" => 500,
             _ => 1000
         };
         _timer.Tick += (_, _) =>
         {
-            Advance();
-            Invalidate();
+            if (Advance())
+                Invalidate();
         };
 
         if (_kind == "Lines")
@@ -73,7 +76,10 @@ public sealed class ScreenSaverOverlayForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        _timer.Start();
+        _lastAnimationMilliseconds = _animationClock.ElapsedMilliseconds;
+        // Black is static after its first paint; no animation timer is needed.
+        if (_kind != "Black")
+            _timer.Start();
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
@@ -108,45 +114,51 @@ public sealed class ScreenSaverOverlayForm : Form
         }
     }
 
-    private void Advance()
+    private bool Advance()
     {
         _tick++;
+        var nowMilliseconds = _animationClock.ElapsedMilliseconds;
+        var elapsedSeconds = Math.Clamp((nowMilliseconds - _lastAnimationMilliseconds) / 1000f, 0.001f, 1f);
+        _lastAnimationMilliseconds = nowMilliseconds;
 
         if (_kind == "RandomText")
         {
             var age = DateTime.UtcNow - _randomTextCreatedAtUtc;
             if (age.TotalSeconds >= RandomTextMoveSeconds)
+            {
                 GenerateRandomTextState();
+                return true;
+            }
 
-            return;
+            // The text is static before the fade window, so avoid needless full-screen paints.
+            return age.TotalSeconds >= RandomTextMoveSeconds - RandomTextFadeSeconds;
         }
 
         if (_kind == "Lines")
         {
             foreach (var line in _lines)
             {
-                line.X += line.Dx;
-                line.Y += line.Dy;
+                line.X += line.Dx * elapsedSeconds;
+                line.Y += line.Dy * elapsedSeconds;
                 if (line.X < -80 || line.X > Width + 80 || line.Y < -80 || line.Y > Height + 80)
                 {
                     line.X = _random.Next(0, Math.Max(1, Width));
                     line.Y = _random.Next(0, Math.Max(1, Height));
-                    line.Dx = _random.Next(-6, 7);
-                    line.Dy = _random.Next(-6, 7);
-                    if (line.Dx == 0 && line.Dy == 0)
-                        line.Dx = 3;
+                    line.Dx = _random.Next(-34, 35);
+                    line.Dy = _random.Next(-34, 35);
+                    if (Math.Abs(line.Dx) < 1 && Math.Abs(line.Dy) < 1)
+                        line.Dx = 17;
                 }
             }
-
-            return;
+            return true;
         }
 
         if (_kind == "Bubbles")
         {
             foreach (var bubble in _bubbles)
             {
-                bubble.X += bubble.Dx;
-                bubble.Y += bubble.Dy;
+                bubble.X += bubble.Dx * elapsedSeconds;
+                bubble.Y += bubble.Dy * elapsedSeconds;
 
                 if (bubble.X < -bubble.Radius * 2)
                     bubble.X = Width + bubble.Radius;
@@ -158,7 +170,10 @@ public sealed class ScreenSaverOverlayForm : Form
                 else if (bubble.Y > Height + bubble.Radius * 2)
                     bubble.Y = -bubble.Radius;
             }
+            return true;
         }
+
+        return false;
     }
 
     private void InitializeLines()
@@ -171,8 +186,8 @@ public sealed class ScreenSaverOverlayForm : Form
             {
                 X = _random.Next(0, Math.Max(1, Width)),
                 Y = _random.Next(0, Math.Max(1, Height)),
-                Dx = _random.Next(-5, 6),
-                Dy = _random.Next(-5, 6),
+                Dx = _random.Next(-28, 29),
+                Dy = _random.Next(-28, 29),
                 Length = _random.Next(80, 220)
             });
         }
@@ -185,12 +200,12 @@ public sealed class ScreenSaverOverlayForm : Form
         for (var i = 0; i < count; i++)
         {
             var radius = _random.Next(18, 78);
-            var dx = (float)(_random.NextDouble() * 1.8 - 0.9);
-            var dy = (float)(_random.NextDouble() * 1.8 - 0.9);
-            if (Math.Abs(dx) < 0.15f)
-                dx = dx < 0 ? -0.25f : 0.25f;
-            if (Math.Abs(dy) < 0.15f)
-                dy = dy < 0 ? -0.25f : 0.25f;
+            var dx = (float)(_random.NextDouble() * 20.0 - 10.0);
+            var dy = (float)(_random.NextDouble() * 20.0 - 10.0);
+            if (Math.Abs(dx) < 1.7f)
+                dx = dx < 0 ? -2.8f : 2.8f;
+            if (Math.Abs(dy) < 1.7f)
+                dy = dy < 0 ? -2.8f : 2.8f;
 
             _bubbles.Add(new BubbleParticle
             {
@@ -316,15 +331,12 @@ public sealed class ScreenSaverOverlayForm : Form
                 bubble.Radius * 2,
                 bubble.Radius * 2);
 
-            using var path = new GraphicsPath();
-            path.AddEllipse(rect);
-
             using var fill = new SolidBrush(Color.FromArgb(Math.Max(18, bubble.Color.A / 3), bubble.Color.R, bubble.Color.G, bubble.Color.B));
             using var pen = new Pen(bubble.Color, Math.Max(1.2f, bubble.Radius / 18f));
             using var highlight = new SolidBrush(Color.FromArgb(Math.Min(170, bubble.Color.A + 40), 255, 255, 255));
 
-            g.FillPath(fill, path);
-            g.DrawPath(pen, path);
+            g.FillEllipse(fill, rect);
+            g.DrawEllipse(pen, rect);
 
             var h = Math.Max(4f, bubble.Radius * 0.26f);
             g.FillEllipse(
@@ -351,10 +363,10 @@ public sealed class ScreenSaverOverlayForm : Form
 
     private sealed class LineParticle
     {
-        public int X;
-        public int Y;
-        public int Dx;
-        public int Dy;
+        public float X;
+        public float Y;
+        public float Dx;
+        public float Dy;
         public int Length;
     }
 

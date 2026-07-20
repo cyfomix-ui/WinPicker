@@ -1,4 +1,4 @@
-# WinPicker v0.68
+# WinPicker v0.71
 
 [English](#english)
 
@@ -9,6 +9,14 @@
 ## 日本語
 
 WinPicker は、複数モニター上のウィンドウをミニマップから選び、指定したモニターへ呼び戻せる Windows 11 用タスクトレイユーティリティです。
+
+### v0.69 から v0.71 の主な更新
+
+- モニターマップのサムネイル取得とウィンドウ列挙をバックグラウンド化し、表示中のUI応答性とCPU使用率を改善しました。
+- 実ウィンドウ右上に `1`〜`9`、`a`〜`z` のショートカットバッジを表示し、`Win + Alt + 項目キー` との対応を分かりやすくしました。
+- キーボードフックとピッカー外クリック検出を専用STAスレッドへ分離し、フック処理の安定性を改善しました。
+- スクリーンセーバー描画とメディア検出を軽量化し、不要な再描画や重複処理を削減しました。
+- CPU使用量を再現可能な条件で計測する `Measure-WinPickerCpu.ps1` を追加しました。
 
 ### v0.33 から v0.68 の主な更新
 
@@ -67,7 +75,15 @@ dotnet publish .\WinPicker\WinPicker.csproj -c Release -r win-x64 --self-contain
 
 WinPicker is a Windows 11 task-tray utility for selecting windows from a multi-monitor minimap and bringing them to a chosen monitor.
 
-### Highlights since v0.33
+### Highlights from v0.69 to v0.71
+
+- Moved monitor-map thumbnail capture and window enumeration to background workers for a more responsive UI and lower CPU usage.
+- Added click-through shortcut badges (`1`-`9`, `a`-`z`) to real windows so they match `Win + Alt + item` shortcuts.
+- Isolated the keyboard and outside-click hooks on dedicated STA threads for more reliable hook processing.
+- Reduced unnecessary screen-saver repainting and duplicate media-detection work.
+- Added `Measure-WinPickerCpu.ps1` for repeatable CPU-usage measurements.
+
+### Highlights since v0.33 through v0.68
 
 - Added per-monitor screen savers with global or per-display idle times and black, clock, date, or clock-and-date modes.
 - Added media detection to suppress the saver on monitors playing video or audio.
